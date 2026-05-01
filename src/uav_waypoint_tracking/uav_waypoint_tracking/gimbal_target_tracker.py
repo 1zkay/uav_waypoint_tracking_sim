@@ -9,7 +9,13 @@ from geometry_msgs.msg import Vector3Stamped
 from px4_msgs.msg import VehicleCommand
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
-from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
+from rclpy.qos import (
+    DurabilityPolicy,
+    HistoryPolicy,
+    QoSProfile,
+    ReliabilityPolicy,
+    qos_profile_sensor_data,
+)
 from sensor_msgs.msg import Image
 from std_msgs.msg import Bool
 from vision_msgs.msg import Detection2D, Detection2DArray
@@ -23,19 +29,10 @@ class SelectedDetection:
     score: float
     center_x: float
     center_y: float
-    width: float
-    height: float
 
 
 class GimbalTargetTracker(Node):
-    """Keep a detected target close to the x500_0 gimbal camera image center.
-
-    The node implements an image-plane visual-servo loop:
-    1. subscribe to a Detection2DArray produced by ``yolo_detector``;
-    2. compute normalized pixel error between target bbox center and image center;
-    3. integrate bounded pitch/yaw rates;
-    4. send PX4 gimbal manager pitch/yaw commands through VehicleCommand.
-    """
+    """Keep a detected target near the gimbal camera image center."""
 
     MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW = 1000
 
@@ -46,7 +43,10 @@ class GimbalTargetTracker(Node):
         self.declare_parameter("image_topic", "/x500_0/camera/image_raw")
         self.declare_parameter("vehicle_command_topic", "/fmu/in/vehicle_command")
         self.declare_parameter("error_topic", "/x500_0/gimbal_target_tracker/error")
-        self.declare_parameter("tracking_active_topic", "/x500_0/gimbal_target_tracker/tracking_active")
+        self.declare_parameter(
+            "tracking_active_topic",
+            "/x500_0/gimbal_target_tracker/tracking_active",
+        )
 
         self.declare_parameter("target_class_id", "")
         self.declare_parameter("min_score", 0.25)
@@ -77,11 +77,18 @@ class GimbalTargetTracker(Node):
         self.declare_parameter("gimbal_device_id", 0.0)
         self.declare_parameter("gimbal_manager_flags", 0.0)
 
+        self.declare_parameter("hold_last_command_on_loss", True)
+        self.declare_parameter("send_command_before_first_detection", False)
+
         self.detections_topic = str(self.get_parameter("detections_topic").value)
         self.image_topic = str(self.get_parameter("image_topic").value)
-        self.vehicle_command_topic = str(self.get_parameter("vehicle_command_topic").value)
+        self.vehicle_command_topic = str(
+            self.get_parameter("vehicle_command_topic").value
+        )
         self.error_topic = str(self.get_parameter("error_topic").value)
-        self.tracking_active_topic = str(self.get_parameter("tracking_active_topic").value)
+        self.tracking_active_topic = str(
+            self.get_parameter("tracking_active_topic").value
+        )
 
         self.target_class_id = str(self.get_parameter("target_class_id").value).strip()
         self.min_score = float(self.get_parameter("min_score").value)
@@ -89,12 +96,22 @@ class GimbalTargetTracker(Node):
         self.lost_timeout_s = float(self.get_parameter("lost_timeout_s").value)
         self.image_width = float(self.get_parameter("image_width").value)
         self.image_height = float(self.get_parameter("image_height").value)
-        self.deadband_normalized = float(self.get_parameter("deadband_normalized").value)
+        self.deadband_normalized = float(
+            self.get_parameter("deadband_normalized").value
+        )
 
-        self.yaw_rate_gain_deg_s = float(self.get_parameter("yaw_rate_gain_deg_s").value)
-        self.pitch_rate_gain_deg_s = float(self.get_parameter("pitch_rate_gain_deg_s").value)
-        self.max_yaw_rate_deg_s = float(self.get_parameter("max_yaw_rate_deg_s").value)
-        self.max_pitch_rate_deg_s = float(self.get_parameter("max_pitch_rate_deg_s").value)
+        self.yaw_rate_gain_deg_s = float(
+            self.get_parameter("yaw_rate_gain_deg_s").value
+        )
+        self.pitch_rate_gain_deg_s = float(
+            self.get_parameter("pitch_rate_gain_deg_s").value
+        )
+        self.max_yaw_rate_deg_s = float(
+            self.get_parameter("max_yaw_rate_deg_s").value
+        )
+        self.max_pitch_rate_deg_s = float(
+            self.get_parameter("max_pitch_rate_deg_s").value
+        )
         self.yaw_error_sign = float(self.get_parameter("yaw_error_sign").value)
         self.pitch_error_sign = float(self.get_parameter("pitch_error_sign").value)
 
@@ -110,12 +127,21 @@ class GimbalTargetTracker(Node):
         self.source_system = int(self.get_parameter("source_system").value)
         self.source_component = int(self.get_parameter("source_component").value)
         self.gimbal_device_id = float(self.get_parameter("gimbal_device_id").value)
-        self.gimbal_manager_flags = float(self.get_parameter("gimbal_manager_flags").value)
+        self.gimbal_manager_flags = float(
+            self.get_parameter("gimbal_manager_flags").value
+        )
+
+        self.hold_last_command_on_loss = bool(
+            self.get_parameter("hold_last_command_on_loss").value
+        )
+        self.send_command_before_first_detection = bool(
+            self.get_parameter("send_command_before_first_detection").value
+        )
 
         self.last_detection: SelectedDetection | None = None
         self.last_detection_time_s: float | None = None
         self.last_update_time_s: float | None = None
-        self.last_tracking_active: bool | None = None
+        self.has_sent_gimbal_command = False
 
         px4_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -124,12 +150,30 @@ class GimbalTargetTracker(Node):
             depth=1,
         )
 
-        self.command_pub = self.create_publisher(VehicleCommand, self.vehicle_command_topic, px4_qos)
+        self.command_pub = self.create_publisher(
+            VehicleCommand,
+            self.vehicle_command_topic,
+            px4_qos,
+        )
         self.error_pub = self.create_publisher(Vector3Stamped, self.error_topic, 10)
-        self.tracking_active_pub = self.create_publisher(Bool, self.tracking_active_topic, 10)
+        self.tracking_active_pub = self.create_publisher(
+            Bool,
+            self.tracking_active_topic,
+            10,
+        )
 
-        self.create_subscription(Detection2DArray, self.detections_topic, self._detections_callback, 10)
-        self.create_subscription(Image, self.image_topic, self._image_callback, qos_profile_sensor_data)
+        self.create_subscription(
+            Detection2DArray,
+            self.detections_topic,
+            self._detections_callback,
+            10,
+        )
+        self.create_subscription(
+            Image,
+            self.image_topic,
+            self._image_callback,
+            qos_profile_sensor_data,
+        )
 
         timer_period = 1.0 / max(self.control_rate_hz, 1.0)
         self.timer = self.create_timer(timer_period, self._timer_callback)
@@ -138,7 +182,8 @@ class GimbalTargetTracker(Node):
         self.get_logger().info(
             "Gimbal target tracker ready: "
             f"detections={self.detections_topic}, image={self.image_topic}, "
-            f"command={self.vehicle_command_topic}, target={target_filter}, rate={self.control_rate_hz:.1f} Hz"
+            f"command={self.vehicle_command_topic}, target={target_filter}, "
+            f"rate={self.control_rate_hz:.1f} Hz"
         )
 
     def _image_callback(self, msg: Image) -> None:
@@ -154,7 +199,10 @@ class GimbalTargetTracker(Node):
         self.last_detection = selected
         self.last_detection_time_s = self._now_s()
 
-    def _select_detection(self, detections: list[Detection2D]) -> SelectedDetection | None:
+    def _select_detection(
+        self,
+        detections: list[Detection2D],
+    ) -> SelectedDetection | None:
         best: SelectedDetection | None = None
 
         for detection in detections:
@@ -169,8 +217,6 @@ class GimbalTargetTracker(Node):
                 score=score,
                 center_x=float(detection.bbox.center.position.x),
                 center_y=float(detection.bbox.center.position.y),
-                width=float(detection.bbox.size_x),
-                height=float(detection.bbox.size_y),
             )
             if best is None or candidate.score > best.score:
                 best = candidate
@@ -198,7 +244,7 @@ class GimbalTargetTracker(Node):
         self._publish_tracking_active(active)
 
         if not active or self.last_detection is None:
-            self._publish_gimbal_command(self._now_us(), self.pitch_deg, self.yaw_deg)
+            self._handle_missing_target()
             return
 
         error_x, error_y = self._normalized_image_error(self.last_detection)
@@ -216,12 +262,31 @@ class GimbalTargetTracker(Node):
             self.max_pitch_rate_deg_s,
         )
 
-        self.yaw_deg = clamp(self.yaw_deg + yaw_rate_deg_s * dt_s, self.min_yaw_deg, self.max_yaw_deg)
-        self.pitch_deg = clamp(self.pitch_deg + pitch_rate_deg_s * dt_s, self.min_pitch_deg, self.max_pitch_deg)
+        self.yaw_deg = clamp(
+            self.yaw_deg + yaw_rate_deg_s * dt_s,
+            self.min_yaw_deg,
+            self.max_yaw_deg,
+        )
+        self.pitch_deg = clamp(
+            self.pitch_deg + pitch_rate_deg_s * dt_s,
+            self.min_pitch_deg,
+            self.max_pitch_deg,
+        )
 
         now_us = self._now_us()
         self._publish_error(now_us, error_x, error_y, self.last_detection.score)
         self._publish_gimbal_command(now_us, self.pitch_deg, self.yaw_deg)
+
+    def _handle_missing_target(self) -> None:
+        if self.has_sent_gimbal_command and self.hold_last_command_on_loss:
+            self._publish_gimbal_command(self._now_us(), self.pitch_deg, self.yaw_deg)
+            return
+
+        if (
+            not self.has_sent_gimbal_command
+            and self.send_command_before_first_detection
+        ):
+            self._publish_gimbal_command(self._now_us(), self.pitch_deg, self.yaw_deg)
 
     def _time_delta_s(self, now_s: float) -> float:
         if self.last_update_time_s is None:
@@ -239,7 +304,10 @@ class GimbalTargetTracker(Node):
             and now_s - self.last_detection_time_s <= self.lost_timeout_s
         )
 
-    def _normalized_image_error(self, detection: SelectedDetection) -> tuple[float, float]:
+    def _normalized_image_error(
+        self,
+        detection: SelectedDetection,
+    ) -> tuple[float, float]:
         half_width = max(self.image_width * 0.5, 1.0)
         half_height = max(self.image_height * 0.5, 1.0)
         error_x = (detection.center_x - half_width) / half_width
@@ -249,7 +317,13 @@ class GimbalTargetTracker(Node):
     def _apply_deadband(self, value: float) -> float:
         return 0.0 if abs(value) < self.deadband_normalized else value
 
-    def _publish_error(self, now_us: int, error_x: float, error_y: float, score: float) -> None:
+    def _publish_error(
+        self,
+        now_us: int,
+        error_x: float,
+        error_y: float,
+        score: float,
+    ) -> None:
         msg = Vector3Stamped()
         msg.header.stamp.sec = int(now_us // 1_000_000)
         msg.header.stamp.nanosec = int((now_us % 1_000_000) * 1000)
@@ -260,14 +334,16 @@ class GimbalTargetTracker(Node):
         self.error_pub.publish(msg)
 
     def _publish_tracking_active(self, active: bool) -> None:
-        if self.last_tracking_active == active:
-            return
-        self.last_tracking_active = active
         msg = Bool()
         msg.data = active
         self.tracking_active_pub.publish(msg)
 
-    def _publish_gimbal_command(self, now_us: int, pitch_deg: float, yaw_deg: float) -> None:
+    def _publish_gimbal_command(
+        self,
+        now_us: int,
+        pitch_deg: float,
+        yaw_deg: float,
+    ) -> None:
         msg = VehicleCommand()
         msg.timestamp = now_us
         msg.command = int(
@@ -290,6 +366,7 @@ class GimbalTargetTracker(Node):
         msg.source_component = self.source_component
         msg.from_external = True
         self.command_pub.publish(msg)
+        self.has_sent_gimbal_command = True
 
     def _now_s(self) -> float:
         return self.get_clock().now().nanoseconds * 1e-9
