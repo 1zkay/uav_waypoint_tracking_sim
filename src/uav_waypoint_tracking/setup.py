@@ -27,7 +27,6 @@ setup(
             "waypoint_tracker = uav_waypoint_tracking.waypoint_tracker:main",
             "waypoint_visualizer = uav_waypoint_tracking.waypoint_visualizer:main",
             "trajectory_logger = uav_waypoint_tracking.trajectory_logger:main",
-            "yolo_detector = uav_waypoint_tracking.yolo_detector:main",
             "yolo_tracker = uav_waypoint_tracking.yolo_tracker:main",
             "gimbal_target_tracker = uav_waypoint_tracking.gimbal_target_tracker:main",
         ],
