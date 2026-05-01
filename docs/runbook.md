@@ -18,6 +18,13 @@ ros2 topic echo /waypoint_tracker/current_waypoint_index --once
 ros2 topic echo /waypoint_path --once
 ```
 
+主机云台相机和 YOLO 检测启动后：
+
+```bash
+ros2 topic list | rg 'x500_0/(camera|yolo)'
+ros2 topic echo /x500_0/yolo/detections --once
+```
+
 目标无人机启动后，按官方多机规则会出现在 `/px4_1/...` namespace：
 
 ```bash

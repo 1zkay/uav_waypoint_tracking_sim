@@ -3,6 +3,7 @@ from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -28,6 +29,19 @@ def generate_launch_description():
     log_root = LaunchConfiguration("log_root")
     run_id = LaunchConfiguration("run_id")
     rviz_frame_id = LaunchConfiguration("rviz_frame_id")
+    enable_camera_bridge = LaunchConfiguration("enable_camera_bridge")
+    enable_yolo_detection = LaunchConfiguration("enable_yolo_detection")
+    camera_gazebo_topic = LaunchConfiguration("camera_gazebo_topic")
+    camera_image_topic = LaunchConfiguration("camera_image_topic")
+    yolo_weights_path = LaunchConfiguration("yolo_weights_path")
+    yolo_detections_topic = LaunchConfiguration("yolo_detections_topic")
+    yolo_annotated_image_topic = LaunchConfiguration("yolo_annotated_image_topic")
+    yolo_confidence_threshold = LaunchConfiguration("yolo_confidence_threshold")
+    yolo_iou_threshold = LaunchConfiguration("yolo_iou_threshold")
+    yolo_image_size = LaunchConfiguration("yolo_image_size")
+    yolo_max_detections = LaunchConfiguration("yolo_max_detections")
+    yolo_classes = LaunchConfiguration("yolo_classes")
+    yolo_device = LaunchConfiguration("yolo_device")
 
     return LaunchDescription(
         [
@@ -141,6 +155,71 @@ def generate_launch_description():
                 default_value="map",
                 description="RViz frame used by waypoint_visualizer. PX4 NED is converted to ROS ENU.",
             ),
+            DeclareLaunchArgument(
+                "enable_camera_bridge",
+                default_value="false",
+                description="Bridge the x500_0 Gazebo gimbal camera image to ROS 2.",
+            ),
+            DeclareLaunchArgument(
+                "enable_yolo_detection",
+                default_value="false",
+                description="Start YOLOv8 detection on the bridged x500_0 camera image.",
+            ),
+            DeclareLaunchArgument(
+                "camera_gazebo_topic",
+                default_value="/world/waypoint_tracking/model/x500_0/link/camera_link/sensor/camera/image",
+                description="Gazebo image topic produced by the x500_0 gimbal camera.",
+            ),
+            DeclareLaunchArgument(
+                "camera_image_topic",
+                default_value="/x500_0/camera/image_raw",
+                description="ROS 2 image topic for the bridged x500_0 camera image.",
+            ),
+            DeclareLaunchArgument(
+                "yolo_weights_path",
+                default_value="/home/zk/uav_waypoint_tracking_sim/yolov8s.pt",
+                description="YOLOv8 weights used by yolo_detector.",
+            ),
+            DeclareLaunchArgument(
+                "yolo_detections_topic",
+                default_value="/x500_0/yolo/detections",
+                description="YOLO vision_msgs/Detection2DArray output topic.",
+            ),
+            DeclareLaunchArgument(
+                "yolo_annotated_image_topic",
+                default_value="/x500_0/yolo/image_annotated",
+                description="YOLO annotated image output topic.",
+            ),
+            DeclareLaunchArgument(
+                "yolo_confidence_threshold",
+                default_value="0.25",
+                description="YOLO confidence threshold.",
+            ),
+            DeclareLaunchArgument(
+                "yolo_iou_threshold",
+                default_value="0.45",
+                description="YOLO non-max suppression IoU threshold.",
+            ),
+            DeclareLaunchArgument(
+                "yolo_image_size",
+                default_value="640",
+                description="YOLO inference image size.",
+            ),
+            DeclareLaunchArgument(
+                "yolo_max_detections",
+                default_value="100",
+                description="Maximum YOLO detections per image.",
+            ),
+            DeclareLaunchArgument(
+                "yolo_classes",
+                default_value="",
+                description="Optional comma-separated YOLO class ids. Empty detects all classes.",
+            ),
+            DeclareLaunchArgument(
+                "yolo_device",
+                default_value="",
+                description="Optional YOLO device, for example cpu, 0, or cuda:0. Empty lets ultralytics choose.",
+            ),
             Node(
                 package="uav_waypoint_tracking",
                 executable="waypoint_tracker",
@@ -205,6 +284,40 @@ def generate_launch_description():
                         "vehicle_attitude_topic": vehicle_attitude_topic,
                         "vehicle_odometry_topic": vehicle_odometry_topic,
                         "gazebo_odometry_topic": gazebo_odometry_topic,
+                    }
+                ],
+            ),
+            Node(
+                package="ros_gz_image",
+                executable="image_bridge",
+                name="x500_0_camera_image_bridge",
+                namespace=node_namespace,
+                output="screen",
+                condition=IfCondition(enable_camera_bridge),
+                arguments=[camera_gazebo_topic],
+                remappings=[(camera_gazebo_topic, camera_image_topic)],
+            ),
+            Node(
+                package="uav_waypoint_tracking",
+                executable="yolo_detector",
+                name="yolo_detector",
+                namespace=node_namespace,
+                output="screen",
+                condition=IfCondition(enable_yolo_detection),
+                parameters=[
+                    {
+                        "weights_path": yolo_weights_path,
+                        "image_topic": camera_image_topic,
+                        "detections_topic": yolo_detections_topic,
+                        "annotated_image_topic": yolo_annotated_image_topic,
+                        "confidence_threshold": ParameterValue(
+                            yolo_confidence_threshold, value_type=float
+                        ),
+                        "iou_threshold": ParameterValue(yolo_iou_threshold, value_type=float),
+                        "image_size": ParameterValue(yolo_image_size, value_type=int),
+                        "max_detections": ParameterValue(yolo_max_detections, value_type=int),
+                        "classes": yolo_classes,
+                        "device": yolo_device,
                     }
                 ],
             ),
