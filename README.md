@@ -66,8 +66,9 @@ cd /home/zk/uav_waypoint_tracking_sim
 `start_waypoint_tracking.sh` 会同时启动控制节点和 RViz 可视化发布节点。
 
 第二架目标无人机按 PX4 Gazebo 官方多机方式运行：每架机一个独立 PX4 SITL 实例。
-主机使用默认实例 `px4_instance=0`、Gazebo 模型 `x500_0`、ROS 2 话题 `/fmu/...`、
-`MAV_SYS_ID=1`。目标机使用 `scripts/start_target_px4_gazebo.sh` 启动为
+主机使用默认实例 `px4_instance=0`、Gazebo 模型 `x500_0`、PX4 官方
+`gz_x500_gimbal` airframe、ROS 2 话题 `/fmu/...`、`MAV_SYS_ID=1`。目标机使用
+`scripts/start_target_px4_gazebo.sh` 启动为
 `px4_instance=1`，连接 Gazebo 中预加载的 `x500_1`；PX4 会自动设置
 `MAV_SYS_ID=2`、`UXRCE_DDS_KEY=2`，ROS 2 话题带 `/px4_1/...` namespace。
 因此目标机的 Offboard 控制必须向 `/px4_1/fmu/in/...` 发布，并把
@@ -92,10 +93,11 @@ WAYPOINTS_FILE=/home/zk/my_waypoints.yaml ./scripts/start_waypoint_tracking.sh
 ```
 
 Gazebo 如果暂停，点击左下角播放按钮。航点仿真默认使用
-`waypoint_tracking` 世界，预加载主机 `x500_0` 和目标机 `x500_1`。两个机体都由 world
-预加载，PX4 启动后分别通过 `PX4_GZ_MODEL_NAME=x500_0` 和
-`PX4_GZ_MODEL_NAME=x500_1` 连接，因此可以只在本仓库内启用受风模型，不修改 PX4
-原始 `x500_base`。
+`waypoint_tracking` 世界，预加载主机 `x500_0` 和目标机 `x500_1`。`x500_0` 使用本仓库的
+`x500_gimbal_waypoint_wind` 包装模型，内部复用 PX4 官方 `x500_gimbal`；`x500_1` 仍使用普通
+`x500_waypoint_wind`。两个机体都由 world 预加载，PX4 启动后分别通过
+`PX4_GZ_MODEL_NAME=x500_0` 和 `PX4_GZ_MODEL_NAME=x500_1` 连接，因此可以只在本仓库内启用
+受风模型和真值 odometry，不修改 PX4 原始 `x500_base` / `x500_gimbal`。
 `default1` 保留给 `/home/zk/gimbal_track` 使用，其中仍包含 `x500_target_moving`。
 Gazebo 世界中包含航点柱、设定高度航线、起降垫、边界和少量参照物；RViz 使用 ROS ENU
 `map` 坐标显示相同航点，其中 PX4 NED 会自动转换为 `x=east, y=north, z=up`。
@@ -143,7 +145,7 @@ WIND_FILE=/home/zk/uav_waypoint_tracking_sim/src/uav_waypoint_tracking/config/wi
 - `px4_estimate.csv`: PX4 EKF/控制侧看到的估计状态，坐标系为 PX4 local NED，机体系为 FRD。
 - `gazebo_truth.csv`: Gazebo 物理真值 odometry，原始坐标系为 Gazebo ENU，同时写入 NED 等效列便于和 PX4 对比。
 
-真值日志由 `x500_waypoint_wind` 内的 Gazebo `OdometryPublisher` 发布
+真值日志由 `x500_gimbal_waypoint_wind` 内的 Gazebo `OdometryPublisher` 发布
 `/model/x500_0/odometry_with_covariance`，再通过 `ros_gz_bridge` 桥接到 ROS 2。PX4 估计日志订阅
 `/fmu/out/vehicle_local_position_v1`、`/fmu/out/vehicle_attitude` 和
 `/fmu/out/vehicle_odometry`。Gazebo 真值 CSV 中的加速度由真值速度差分得到；
@@ -192,8 +194,8 @@ ros2 topic echo /fmu/out/vehicle_local_position_v1 --qos-reliability best_effort
 安全检查失败或起飞后高度估计发散。修改世界文件后必须重启 PX4/Gazebo。
 
 本仓库的 `px4_overlays/worlds/waypoint_tracking.sdf` 是基础世界，只放 Gazebo/PX4
-必须的物理、传感器、地面、`x500_0`、目标机 `x500_1` 和地理基准；航点柱、接受半径、
-规划航线、起降垫、边界和初始风向箭头由
+必须的物理、传感器、地面、云台主机 `x500_0`、普通目标机 `x500_1` 和地理基准；
+航点柱、接受半径、规划航线、起降垫、边界和初始风向箭头由
 `scripts/render_waypoint_world.py` 自动渲染到
 `build/generated/worlds/waypoint_tracking.sdf`，再由 `scripts/start_px4_gazebo.sh`
 同步到 PX4 的 Gazebo worlds 目录。

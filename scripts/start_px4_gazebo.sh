@@ -33,4 +33,4 @@ source /home/zk/px4-venv/bin/activate
 
 export PX4_GZ_WORLD
 
-exec make px4_sitl gz_x500
+exec make px4_sitl gz_x500_gimbal
