@@ -3,7 +3,7 @@ frame: ENU
 
 # Gazebo world ENU wind velocity [east, north, up] in m/s.
 # PX4 local NED equivalent is [north, east, down].
-linear_velocity_mps: [3.0, 0.0, 0.0]
+linear_velocity_mps: [1.0, 0.0, 0.0]
 
 # Values below mirror Gazebo WindEffects SDF tags.
 # time_for_rise / period are seconds; direction amplitude is radians.

@@ -19,3 +19,5 @@ __pycache__/
 *.log
 *.bag
 *.db3
+
+/src/uav_waypoint_tracking/config/wind.yaml
