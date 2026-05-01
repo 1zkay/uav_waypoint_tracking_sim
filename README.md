@@ -40,7 +40,21 @@ cd /home/zk/uav_waypoint_tracking_sim
 ./scripts/start_waypoint_tracking.sh
 ```
 
-终端 4 可选，用于查看航点、目标点、规划路径和实际飞行尾迹：
+终端 4 可选，启动第二架目标无人机的 PX4 实例：
+
+```bash
+cd /home/zk/uav_waypoint_tracking_sim
+./scripts/start_target_px4_gazebo.sh
+```
+
+终端 5 可选，让目标无人机也按同一份航点飞行：
+
+```bash
+cd /home/zk/uav_waypoint_tracking_sim
+./scripts/start_target_waypoint_tracking.sh
+```
+
+终端 6 可选，用于查看航点、目标点、规划路径和实际飞行尾迹：
 
 ```bash
 cd /home/zk/uav_waypoint_tracking_sim
@@ -50,6 +64,15 @@ cd /home/zk/uav_waypoint_tracking_sim
 当前 PX4 main 在这台机器上发布的是 `/fmu/out/vehicle_status_v1` 和
 `/fmu/out/vehicle_local_position_v1`，启动文件默认已经使用这两个话题。
 `start_waypoint_tracking.sh` 会同时启动控制节点和 RViz 可视化发布节点。
+
+第二架目标无人机按 PX4 Gazebo 官方多机方式运行：每架机一个独立 PX4 SITL 实例。
+主机使用默认实例 `px4_instance=0`、Gazebo 模型 `x500_0`、ROS 2 话题 `/fmu/...`、
+`MAV_SYS_ID=1`。目标机使用 `scripts/start_target_px4_gazebo.sh` 启动为
+`px4_instance=1`，连接 Gazebo 中预加载的 `x500_1`；PX4 会自动设置
+`MAV_SYS_ID=2`、`UXRCE_DDS_KEY=2`，ROS 2 话题带 `/px4_1/...` namespace。
+因此目标机的 Offboard 控制必须向 `/px4_1/fmu/in/...` 发布，并把
+`VehicleCommand.target_system` 设为 `2`。`scripts/start_target_waypoint_tracking.sh`
+已经按这个规则配置。`px4_instance > 0` 时不要复用主机的 `/fmu/in/*` 话题。
 
 默认航点在 `src/uav_waypoint_tracking/config/waypoints.yaml`，坐标系是 PX4 本地 NED：
 
@@ -69,9 +92,10 @@ WAYPOINTS_FILE=/home/zk/my_waypoints.yaml ./scripts/start_waypoint_tracking.sh
 ```
 
 Gazebo 如果暂停，点击左下角播放按钮。航点仿真默认使用
-`waypoint_tracking` 世界，只保留一个由 PX4 控制的 `x500_0`。该机体由 world 预加载，
-PX4 启动后通过 `PX4_GZ_MODEL_NAME=x500_0` 连接到它，因此可以只在本仓库内启用受风模型，
-不修改 PX4 原始 `x500_base`。
+`waypoint_tracking` 世界，预加载主机 `x500_0` 和目标机 `x500_1`。两个机体都由 world
+预加载，PX4 启动后分别通过 `PX4_GZ_MODEL_NAME=x500_0` 和
+`PX4_GZ_MODEL_NAME=x500_1` 连接，因此可以只在本仓库内启用受风模型，不修改 PX4
+原始 `x500_base`。
 `default1` 保留给 `/home/zk/gimbal_track` 使用，其中仍包含 `x500_target_moving`。
 Gazebo 世界中包含航点柱、设定高度航线、起降垫、边界和少量参照物；RViz 使用 ROS ENU
 `map` 坐标显示相同航点，其中 PX4 NED 会自动转换为 `x=east, y=north, z=up`。
@@ -147,6 +171,10 @@ LOG_ROOT=/home/zk/uav_logs RUN_ID=wind_3ms_figure8 ./scripts/start_waypoint_trac
 - `/waypoint_path`: YAML 航点连成的规划路径。
 - `/vehicle_path`: 飞行过程中累积的实际轨迹。
 - `/waypoint_tracker/current_waypoint_index`: 当前目标航点索引。
+- `/target/waypoint_markers`: 目标无人机航点可视化。
+- `/target/waypoint_path`: 目标无人机规划路径。
+- `/target/vehicle_path`: 目标无人机实际轨迹。
+- `/target/waypoint_tracker/current_waypoint_index`: 目标无人机当前航点索引。
 
 如果 `x500_0` 不起飞，先确认：
 
@@ -158,14 +186,14 @@ ros2 topic echo /fmu/out/vehicle_local_position_v1 --qos-reliability best_effort
 ```
 
 `/home/zk/PX4-Autopilot/Tools/simulation/gz/worlds/waypoint_tracking.sdf`
-需要只包含基础世界、预加载的 `x500_0`、由 YAML 自动生成的静态航点标记和可选风场，
+需要只包含基础世界、预加载的 `x500_0` / `x500_1`、由 YAML 自动生成的静态航点标记和可选风场，
 并加载 `AirSpeed`、`NavSat`、`Magnetometer`、`WindEffects` 等系统插件。该世界还必须包含
 `spherical_coordinates`，否则 Gazebo 的 NavSat/GNSS 和磁场基准会异常，PX4 可能出现
 安全检查失败或起飞后高度估计发散。修改世界文件后必须重启 PX4/Gazebo。
 
 本仓库的 `px4_overlays/worlds/waypoint_tracking.sdf` 是基础世界，只放 Gazebo/PX4
-必须的物理、传感器、地面、`x500_0` 和地理基准；航点柱、接受半径、规划航线、起降垫、
-边界和初始风向箭头由
+必须的物理、传感器、地面、`x500_0`、目标机 `x500_1` 和地理基准；航点柱、接受半径、
+规划航线、起降垫、边界和初始风向箭头由
 `scripts/render_waypoint_world.py` 自动渲染到
 `build/generated/worlds/waypoint_tracking.sdf`，再由 `scripts/start_px4_gazebo.sh`
 同步到 PX4 的 Gazebo worlds 目录。

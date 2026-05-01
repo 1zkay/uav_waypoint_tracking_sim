@@ -30,6 +30,9 @@ class WaypointVisualizer(Node):
         self.declare_parameter("waypoints_file", "")
         self.declare_parameter("vehicle_local_position_topic", "/fmu/out/vehicle_local_position_v1")
         self.declare_parameter("current_index_topic", "/waypoint_tracker/current_waypoint_index")
+        self.declare_parameter("waypoint_markers_topic", "/waypoint_markers")
+        self.declare_parameter("waypoint_path_topic", "/waypoint_path")
+        self.declare_parameter("vehicle_path_topic", "/vehicle_path")
         self.declare_parameter("frame_id", "map")
         self.declare_parameter("publish_rate_hz", 5.0)
         self.declare_parameter("vehicle_path_min_distance_m", 0.15)
@@ -67,6 +70,9 @@ class WaypointVisualizer(Node):
             self.get_parameter("vehicle_local_position_topic").get_parameter_value().string_value
         )
         current_index_topic = self.get_parameter("current_index_topic").get_parameter_value().string_value
+        waypoint_markers_topic = self.get_parameter("waypoint_markers_topic").get_parameter_value().string_value
+        waypoint_path_topic = self.get_parameter("waypoint_path_topic").get_parameter_value().string_value
+        vehicle_path_topic = self.get_parameter("vehicle_path_topic").get_parameter_value().string_value
 
         self.create_subscription(
             VehicleLocalPosition,
@@ -76,9 +82,9 @@ class WaypointVisualizer(Node):
         )
         self.create_subscription(Int32, current_index_topic, self._current_index_callback, tracker_state_qos)
 
-        self.marker_pub = self.create_publisher(MarkerArray, "/waypoint_markers", 10)
-        self.planned_path_pub = self.create_publisher(NavPath, "/waypoint_path", 10)
-        self.vehicle_path_pub = self.create_publisher(NavPath, "/vehicle_path", 10)
+        self.marker_pub = self.create_publisher(MarkerArray, waypoint_markers_topic, 10)
+        self.planned_path_pub = self.create_publisher(NavPath, waypoint_path_topic, 10)
+        self.vehicle_path_pub = self.create_publisher(NavPath, vehicle_path_topic, 10)
 
         publish_rate_hz = float(self.get_parameter("publish_rate_hz").get_parameter_value().double_value)
         self.timer = self.create_timer(1.0 / max(publish_rate_hz, 1.0), self._timer_callback)
@@ -86,6 +92,10 @@ class WaypointVisualizer(Node):
         self.get_logger().info(
             f"Visualizing {len(self.waypoints)} waypoints in RViz frame '{self.frame_id}'. "
             "PX4 NED is converted to ROS ENU."
+        )
+        self.get_logger().info(
+            f"Publishing visualization topics: {waypoint_markers_topic}, "
+            f"{waypoint_path_topic}, {vehicle_path_topic}"
         )
 
     def _load_config(self) -> dict[str, Any]:

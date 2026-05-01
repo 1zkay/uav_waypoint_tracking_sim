@@ -18,6 +18,14 @@ ros2 topic echo /waypoint_tracker/current_waypoint_index --once
 ros2 topic echo /waypoint_path --once
 ```
 
+目标无人机启动后，按官方多机规则会出现在 `/px4_1/...` namespace：
+
+```bash
+ros2 topic list | rg '/px4_1/fmu/'
+ros2 topic echo /px4_1/fmu/out/vehicle_status_v1 --qos-reliability best_effort --qos-durability transient_local --once
+ros2 topic echo /target/waypoint_tracker/current_waypoint_index --once
+```
+
 RViz 使用 `map` 作为固定坐标系。`waypoint_visualizer` 会把 PX4 本地 NED 航点转换成 ROS ENU，
 所以 RViz 中高度向上。Gazebo 世界坐标也是 ENU，3D 航点标记使用
 `Gazebo x=east=NED y`、`Gazebo y=north=NED x`、`Gazebo z=up=-NED z`。
@@ -28,6 +36,8 @@ Gazebo 静态标记不需要手工改 world。标准流程是只改
 ```bash
 ./scripts/start_px4_gazebo.sh
 ./scripts/start_waypoint_tracking.sh
+./scripts/start_target_px4_gazebo.sh
+./scripts/start_target_waypoint_tracking.sh
 ```
 
 `start_px4_gazebo.sh` 会调用 `scripts/render_waypoint_world.py`，把 YAML 航点转换成

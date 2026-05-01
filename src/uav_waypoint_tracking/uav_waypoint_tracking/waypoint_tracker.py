@@ -29,6 +29,14 @@ class WaypointTracker(Node):
         self.declare_parameter("waypoints_file", "")
         self.declare_parameter("vehicle_status_topic", "/fmu/out/vehicle_status_v1")
         self.declare_parameter("vehicle_local_position_topic", "/fmu/out/vehicle_local_position_v1")
+        self.declare_parameter("offboard_control_mode_topic", "/fmu/in/offboard_control_mode")
+        self.declare_parameter("trajectory_setpoint_topic", "/fmu/in/trajectory_setpoint")
+        self.declare_parameter("vehicle_command_topic", "/fmu/in/vehicle_command")
+        self.declare_parameter("current_index_topic", "/waypoint_tracker/current_waypoint_index")
+        self.declare_parameter("target_system", 1)
+        self.declare_parameter("target_component", 1)
+        self.declare_parameter("source_system", 1)
+        self.declare_parameter("source_component", 1)
         config = self._load_config()
 
         self.waypoints = self._parse_waypoints(config)
@@ -50,6 +58,11 @@ class WaypointTracker(Node):
         self.vehicle_local_position: VehicleLocalPosition | None = None
         self.vehicle_status: VehicleStatus | None = None
 
+        self.target_system = int(self.get_parameter("target_system").value)
+        self.target_component = int(self.get_parameter("target_component").value)
+        self.source_system = int(self.get_parameter("source_system").value)
+        self.source_component = int(self.get_parameter("source_component").value)
+
         qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -57,14 +70,23 @@ class WaypointTracker(Node):
             depth=1,
         )
 
+        offboard_control_mode_topic = (
+            self.get_parameter("offboard_control_mode_topic").get_parameter_value().string_value
+        )
+        trajectory_setpoint_topic = (
+            self.get_parameter("trajectory_setpoint_topic").get_parameter_value().string_value
+        )
+        vehicle_command_topic = self.get_parameter("vehicle_command_topic").get_parameter_value().string_value
+        current_index_topic = self.get_parameter("current_index_topic").get_parameter_value().string_value
+
         self.offboard_mode_pub = self.create_publisher(
-            OffboardControlMode, "/fmu/in/offboard_control_mode", qos_profile
+            OffboardControlMode, offboard_control_mode_topic, qos_profile
         )
         self.trajectory_pub = self.create_publisher(
-            TrajectorySetpoint, "/fmu/in/trajectory_setpoint", qos_profile
+            TrajectorySetpoint, trajectory_setpoint_topic, qos_profile
         )
         self.vehicle_command_pub = self.create_publisher(
-            VehicleCommand, "/fmu/in/vehicle_command", qos_profile
+            VehicleCommand, vehicle_command_topic, qos_profile
         )
         tracker_state_qos = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
@@ -73,7 +95,7 @@ class WaypointTracker(Node):
             depth=1,
         )
         self.current_index_pub = self.create_publisher(
-            Int32, "/waypoint_tracker/current_waypoint_index", tracker_state_qos
+            Int32, current_index_topic, tracker_state_qos
         )
 
         vehicle_local_position_topic = (
@@ -103,6 +125,10 @@ class WaypointTracker(Node):
         )
         self.get_logger().info(
             f"Subscribing to state topics: {vehicle_status_topic}, {vehicle_local_position_topic}"
+        )
+        self.get_logger().info(
+            f"Publishing control topics: {offboard_control_mode_topic}, "
+            f"{trajectory_setpoint_topic}, {vehicle_command_topic}; target_system={self.target_system}"
         )
 
     def _load_config(self) -> dict[str, Any]:
@@ -347,10 +373,10 @@ class WaypointTracker(Node):
         msg.param6 = float(param6)
         msg.param7 = float(param7)
         msg.command = int(command)
-        msg.target_system = 1
-        msg.target_component = 1
-        msg.source_system = 1
-        msg.source_component = 1
+        msg.target_system = self.target_system
+        msg.target_component = self.target_component
+        msg.source_system = self.source_system
+        msg.source_component = self.source_component
         msg.from_external = True
         self.vehicle_command_pub.publish(msg)
 
