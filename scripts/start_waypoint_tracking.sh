@@ -8,13 +8,14 @@ LOG_ROOT="${LOG_ROOT:-}"
 RUN_ID="${RUN_ID:-}"
 PYTHON_VENV="${PYTHON_VENV:-/home/zk/px4-venv}"
 ENABLE_CAMERA_BRIDGE="${ENABLE_CAMERA_BRIDGE:-true}"
-ENABLE_YOLO_DETECTION="${ENABLE_YOLO_DETECTION:-true}"
+ENABLE_YOLO_TRACKING="${ENABLE_YOLO_TRACKING:-true}"
 ENABLE_GIMBAL_TRACKING="${ENABLE_GIMBAL_TRACKING:-false}"
 CAMERA_GAZEBO_TOPIC="${CAMERA_GAZEBO_TOPIC:-/world/waypoint_tracking/model/x500_0/link/camera_link/sensor/camera/image}"
 CAMERA_IMAGE_TOPIC="${CAMERA_IMAGE_TOPIC:-/x500_0/camera/image_raw}"
 YOLO_WEIGHTS_PATH="${YOLO_WEIGHTS_PATH:-${SIM_ROOT}/yolov8s.pt}"
-YOLO_DETECTIONS_TOPIC="${YOLO_DETECTIONS_TOPIC:-/x500_0/yolo/detections}"
-YOLO_ANNOTATED_IMAGE_TOPIC="${YOLO_ANNOTATED_IMAGE_TOPIC:-/x500_0/yolo/image_annotated}"
+YOLO_TRACKS_TOPIC="${YOLO_TRACKS_TOPIC:-/x500_0/yolo/tracks}"
+YOLO_TRACKS_ANNOTATED_IMAGE_TOPIC="${YOLO_TRACKS_ANNOTATED_IMAGE_TOPIC:-/x500_0/yolo/tracks_image}"
+GIMBAL_INPUT_TOPIC="${GIMBAL_INPUT_TOPIC:-${YOLO_TRACKS_TOPIC}}"
 
 cd "${SIM_ROOT}"
 if [[ -f "${PYTHON_VENV}/bin/activate" ]]; then
@@ -65,14 +66,18 @@ add_launch_arg() {
 
 add_launch_arg "waypoints_file" "${WAYPOINTS_FILE}"
 add_launch_arg "enable_camera_bridge" "${ENABLE_CAMERA_BRIDGE}"
-add_launch_arg "enable_yolo_detection" "${ENABLE_YOLO_DETECTION}"
+add_launch_arg "enable_yolo_tracking" "${ENABLE_YOLO_TRACKING}"
 add_launch_arg "enable_gimbal_tracking" "${ENABLE_GIMBAL_TRACKING}"
 add_launch_arg "camera_gazebo_topic" "${CAMERA_GAZEBO_TOPIC}"
 add_launch_arg "camera_image_topic" "${CAMERA_IMAGE_TOPIC}"
 add_launch_arg "yolo_weights_path" "${YOLO_WEIGHTS_PATH}"
-add_launch_arg "yolo_detections_topic" "${YOLO_DETECTIONS_TOPIC}"
-add_launch_arg "yolo_annotated_image_topic" "${YOLO_ANNOTATED_IMAGE_TOPIC}"
+add_launch_arg "yolo_tracks_topic" "${YOLO_TRACKS_TOPIC}"
+add_launch_arg "yolo_tracks_annotated_image_topic" "${YOLO_TRACKS_ANNOTATED_IMAGE_TOPIC}"
+add_launch_arg "gimbal_input_topic" "${GIMBAL_INPUT_TOPIC}"
 
+if [[ -n "${YOLO_TRACKING_CONFIG_FILE:-}" ]]; then
+  add_launch_arg "yolo_tracking_config_file" "${YOLO_TRACKING_CONFIG_FILE}"
+fi
 if [[ -n "${GIMBAL_CONFIG_FILE:-}" ]]; then
   add_launch_arg "gimbal_config_file" "${GIMBAL_CONFIG_FILE}"
 fi
@@ -85,6 +90,6 @@ fi
 
 echo "Launching waypoint tracker with ${WAYPOINTS_FILE}"
 echo "Camera bridge: $(launch_arg_value enable_camera_bridge "${ENABLE_CAMERA_BRIDGE}") $(launch_arg_value camera_gazebo_topic "${CAMERA_GAZEBO_TOPIC}") -> $(launch_arg_value camera_image_topic "${CAMERA_IMAGE_TOPIC}")"
-echo "YOLO detection: $(launch_arg_value enable_yolo_detection "${ENABLE_YOLO_DETECTION}") weights=$(launch_arg_value yolo_weights_path "${YOLO_WEIGHTS_PATH}")"
-echo "Gimbal tracking: $(launch_arg_value enable_gimbal_tracking "${ENABLE_GIMBAL_TRACKING}") config=$(launch_arg_value gimbal_config_file "package default")"
+echo "YOLO tracking: $(launch_arg_value enable_yolo_tracking "${ENABLE_YOLO_TRACKING}") tracks=$(launch_arg_value yolo_tracks_topic "${YOLO_TRACKS_TOPIC}")"
+echo "Gimbal tracking: $(launch_arg_value enable_gimbal_tracking "${ENABLE_GIMBAL_TRACKING}") input=$(launch_arg_value gimbal_input_topic "${GIMBAL_INPUT_TOPIC}")"
 exec ros2 launch uav_waypoint_tracking waypoint_tracking.launch.py "${launch_args[@]}"
