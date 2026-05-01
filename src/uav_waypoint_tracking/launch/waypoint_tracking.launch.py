@@ -1,9 +1,10 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
+from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
@@ -42,6 +43,14 @@ def generate_launch_description():
     yolo_max_detections = LaunchConfiguration("yolo_max_detections")
     yolo_classes = LaunchConfiguration("yolo_classes")
     yolo_device = LaunchConfiguration("yolo_device")
+    enable_gimbal_tracking = LaunchConfiguration("enable_gimbal_tracking")
+    gimbal_config_file = LaunchConfiguration("gimbal_config_file")
+    gimbal_target_class_id = LaunchConfiguration("gimbal_target_class_id")
+    gimbal_min_score = LaunchConfiguration("gimbal_min_score")
+    gimbal_yaw_rate_gain_deg_s = LaunchConfiguration("gimbal_yaw_rate_gain_deg_s")
+    gimbal_pitch_rate_gain_deg_s = LaunchConfiguration("gimbal_pitch_rate_gain_deg_s")
+    gimbal_yaw_error_sign = LaunchConfiguration("gimbal_yaw_error_sign")
+    gimbal_pitch_error_sign = LaunchConfiguration("gimbal_pitch_error_sign")
 
     return LaunchDescription(
         [
@@ -220,6 +229,52 @@ def generate_launch_description():
                 default_value="",
                 description="Optional YOLO device, for example cpu, 0, or cuda:0. Empty lets ultralytics choose.",
             ),
+            DeclareLaunchArgument(
+                "enable_gimbal_tracking",
+                default_value="false",
+                description="Start visual-servo gimbal tracking from YOLO detections.",
+            ),
+            DeclareLaunchArgument(
+                "gimbal_config_file",
+                default_value=PathJoinSubstitution(
+                    [
+                        FindPackageShare("uav_waypoint_tracking"),
+                        "config",
+                        "gimbal_tracking.yaml",
+                    ]
+                ),
+                description="YAML parameter file for gimbal_target_tracker.",
+            ),
+            DeclareLaunchArgument(
+                "gimbal_target_class_id",
+                default_value="",
+                description="Optional class id/name to track. Empty tracks the highest-score detection.",
+            ),
+            DeclareLaunchArgument(
+                "gimbal_min_score",
+                default_value="0.25",
+                description="Minimum detection confidence used by gimbal tracking.",
+            ),
+            DeclareLaunchArgument(
+                "gimbal_yaw_rate_gain_deg_s",
+                default_value="45.0",
+                description="Yaw rate gain in deg/s for full-scale horizontal image error.",
+            ),
+            DeclareLaunchArgument(
+                "gimbal_pitch_rate_gain_deg_s",
+                default_value="35.0",
+                description="Pitch rate gain in deg/s for full-scale vertical image error.",
+            ),
+            DeclareLaunchArgument(
+                "gimbal_yaw_error_sign",
+                default_value="1.0",
+                description="Yaw error sign. Flip to -1.0 if horizontal tracking moves away from target.",
+            ),
+            DeclareLaunchArgument(
+                "gimbal_pitch_error_sign",
+                default_value="-1.0",
+                description="Pitch error sign. Flip to 1.0 if vertical tracking moves away from target.",
+            ),
             Node(
                 package="uav_waypoint_tracking",
                 executable="waypoint_tracker",
@@ -311,14 +366,65 @@ def generate_launch_description():
                         "detections_topic": yolo_detections_topic,
                         "annotated_image_topic": yolo_annotated_image_topic,
                         "confidence_threshold": ParameterValue(
-                            yolo_confidence_threshold, value_type=float
+                            yolo_confidence_threshold,
+                            value_type=float,
                         ),
-                        "iou_threshold": ParameterValue(yolo_iou_threshold, value_type=float),
+                        "iou_threshold": ParameterValue(
+                            yolo_iou_threshold,
+                            value_type=float,
+                        ),
                         "image_size": ParameterValue(yolo_image_size, value_type=int),
-                        "max_detections": ParameterValue(yolo_max_detections, value_type=int),
+                        "max_detections": ParameterValue(
+                            yolo_max_detections,
+                            value_type=int,
+                        ),
                         "classes": yolo_classes,
                         "device": yolo_device,
                     }
+                ],
+            ),
+            Node(
+                package="uav_waypoint_tracking",
+                executable="gimbal_target_tracker",
+                name="gimbal_target_tracker",
+                namespace=node_namespace,
+                output="screen",
+                condition=IfCondition(enable_gimbal_tracking),
+                parameters=[
+                    gimbal_config_file,
+                    {
+                        "detections_topic": yolo_detections_topic,
+                        "image_topic": camera_image_topic,
+                        "vehicle_command_topic": vehicle_command_topic,
+                        "target_class_id": gimbal_target_class_id,
+                        "min_score": ParameterValue(gimbal_min_score, value_type=float),
+                        "yaw_rate_gain_deg_s": ParameterValue(
+                            gimbal_yaw_rate_gain_deg_s,
+                            value_type=float,
+                        ),
+                        "pitch_rate_gain_deg_s": ParameterValue(
+                            gimbal_pitch_rate_gain_deg_s,
+                            value_type=float,
+                        ),
+                        "yaw_error_sign": ParameterValue(
+                            gimbal_yaw_error_sign,
+                            value_type=float,
+                        ),
+                        "pitch_error_sign": ParameterValue(
+                            gimbal_pitch_error_sign,
+                            value_type=float,
+                        ),
+                        "target_system": ParameterValue(target_system, value_type=int),
+                        "target_component": ParameterValue(
+                            target_component,
+                            value_type=int,
+                        ),
+                        "source_system": ParameterValue(source_system, value_type=int),
+                        "source_component": ParameterValue(
+                            source_component,
+                            value_type=int,
+                        ),
+                    },
                 ],
             ),
         ]
