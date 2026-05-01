@@ -1,9 +1,10 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
+from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
@@ -43,27 +44,13 @@ def generate_launch_description():
     yolo_classes = LaunchConfiguration("yolo_classes")
     yolo_device = LaunchConfiguration("yolo_device")
     enable_gimbal_tracking = LaunchConfiguration("enable_gimbal_tracking")
+    gimbal_config_file = LaunchConfiguration("gimbal_config_file")
     gimbal_target_class_id = LaunchConfiguration("gimbal_target_class_id")
     gimbal_min_score = LaunchConfiguration("gimbal_min_score")
-    gimbal_control_rate_hz = LaunchConfiguration("gimbal_control_rate_hz")
-    gimbal_lost_timeout_s = LaunchConfiguration("gimbal_lost_timeout_s")
-    gimbal_deadband_normalized = LaunchConfiguration("gimbal_deadband_normalized")
     gimbal_yaw_rate_gain_deg_s = LaunchConfiguration("gimbal_yaw_rate_gain_deg_s")
     gimbal_pitch_rate_gain_deg_s = LaunchConfiguration("gimbal_pitch_rate_gain_deg_s")
-    gimbal_max_yaw_rate_deg_s = LaunchConfiguration("gimbal_max_yaw_rate_deg_s")
-    gimbal_max_pitch_rate_deg_s = LaunchConfiguration("gimbal_max_pitch_rate_deg_s")
     gimbal_yaw_error_sign = LaunchConfiguration("gimbal_yaw_error_sign")
     gimbal_pitch_error_sign = LaunchConfiguration("gimbal_pitch_error_sign")
-    gimbal_initial_yaw_deg = LaunchConfiguration("gimbal_initial_yaw_deg")
-    gimbal_initial_pitch_deg = LaunchConfiguration("gimbal_initial_pitch_deg")
-    gimbal_min_yaw_deg = LaunchConfiguration("gimbal_min_yaw_deg")
-    gimbal_max_yaw_deg = LaunchConfiguration("gimbal_max_yaw_deg")
-    gimbal_min_pitch_deg = LaunchConfiguration("gimbal_min_pitch_deg")
-    gimbal_max_pitch_deg = LaunchConfiguration("gimbal_max_pitch_deg")
-    gimbal_device_id = LaunchConfiguration("gimbal_device_id")
-    gimbal_manager_flags = LaunchConfiguration("gimbal_manager_flags")
-    gimbal_error_topic = LaunchConfiguration("gimbal_error_topic")
-    gimbal_tracking_active_topic = LaunchConfiguration("gimbal_tracking_active_topic")
 
     return LaunchDescription(
         [
@@ -248,6 +235,17 @@ def generate_launch_description():
                 description="Start visual-servo gimbal tracking from YOLO detections.",
             ),
             DeclareLaunchArgument(
+                "gimbal_config_file",
+                default_value=PathJoinSubstitution(
+                    [
+                        FindPackageShare("uav_waypoint_tracking"),
+                        "config",
+                        "gimbal_tracking.yaml",
+                    ]
+                ),
+                description="YAML parameter file for gimbal_target_tracker.",
+            ),
+            DeclareLaunchArgument(
                 "gimbal_target_class_id",
                 default_value="",
                 description="Optional class id/name to track. Empty tracks the highest-score detection.",
@@ -256,21 +254,6 @@ def generate_launch_description():
                 "gimbal_min_score",
                 default_value="0.25",
                 description="Minimum detection confidence used by gimbal tracking.",
-            ),
-            DeclareLaunchArgument(
-                "gimbal_control_rate_hz",
-                default_value="20.0",
-                description="Gimbal visual-servo loop frequency.",
-            ),
-            DeclareLaunchArgument(
-                "gimbal_lost_timeout_s",
-                default_value="0.5",
-                description="Detection freshness timeout before holding the last gimbal angle.",
-            ),
-            DeclareLaunchArgument(
-                "gimbal_deadband_normalized",
-                default_value="0.03",
-                description="Normalized image-center deadband.",
             ),
             DeclareLaunchArgument(
                 "gimbal_yaw_rate_gain_deg_s",
@@ -283,16 +266,6 @@ def generate_launch_description():
                 description="Pitch rate gain in deg/s for full-scale vertical image error.",
             ),
             DeclareLaunchArgument(
-                "gimbal_max_yaw_rate_deg_s",
-                default_value="60.0",
-                description="Maximum commanded yaw rate integration speed.",
-            ),
-            DeclareLaunchArgument(
-                "gimbal_max_pitch_rate_deg_s",
-                default_value="45.0",
-                description="Maximum commanded pitch rate integration speed.",
-            ),
-            DeclareLaunchArgument(
                 "gimbal_yaw_error_sign",
                 default_value="1.0",
                 description="Yaw error sign. Flip to -1.0 if horizontal tracking moves away from target.",
@@ -301,56 +274,6 @@ def generate_launch_description():
                 "gimbal_pitch_error_sign",
                 default_value="-1.0",
                 description="Pitch error sign. Flip to 1.0 if vertical tracking moves away from target.",
-            ),
-            DeclareLaunchArgument(
-                "gimbal_initial_yaw_deg",
-                default_value="0.0",
-                description="Initial gimbal yaw angle in degrees.",
-            ),
-            DeclareLaunchArgument(
-                "gimbal_initial_pitch_deg",
-                default_value="0.0",
-                description="Initial gimbal pitch angle in degrees.",
-            ),
-            DeclareLaunchArgument(
-                "gimbal_min_yaw_deg",
-                default_value="-90.0",
-                description="Minimum gimbal yaw command in degrees.",
-            ),
-            DeclareLaunchArgument(
-                "gimbal_max_yaw_deg",
-                default_value="90.0",
-                description="Maximum gimbal yaw command in degrees.",
-            ),
-            DeclareLaunchArgument(
-                "gimbal_min_pitch_deg",
-                default_value="-90.0",
-                description="Minimum gimbal pitch command in degrees.",
-            ),
-            DeclareLaunchArgument(
-                "gimbal_max_pitch_deg",
-                default_value="30.0",
-                description="Maximum gimbal pitch command in degrees.",
-            ),
-            DeclareLaunchArgument(
-                "gimbal_device_id",
-                default_value="0.0",
-                description="Gimbal manager device id. 0 usually selects the primary simulated gimbal.",
-            ),
-            DeclareLaunchArgument(
-                "gimbal_manager_flags",
-                default_value="0.0",
-                description="Gimbal manager flags for MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW.",
-            ),
-            DeclareLaunchArgument(
-                "gimbal_error_topic",
-                default_value="/x500_0/gimbal_target_tracker/error",
-                description="Published normalized image error topic.",
-            ),
-            DeclareLaunchArgument(
-                "gimbal_tracking_active_topic",
-                default_value="/x500_0/gimbal_target_tracker/tracking_active",
-                description="Published bool indicating fresh target detections.",
             ),
             Node(
                 package="uav_waypoint_tracking",
@@ -443,11 +366,18 @@ def generate_launch_description():
                         "detections_topic": yolo_detections_topic,
                         "annotated_image_topic": yolo_annotated_image_topic,
                         "confidence_threshold": ParameterValue(
-                            yolo_confidence_threshold, value_type=float
+                            yolo_confidence_threshold,
+                            value_type=float,
                         ),
-                        "iou_threshold": ParameterValue(yolo_iou_threshold, value_type=float),
+                        "iou_threshold": ParameterValue(
+                            yolo_iou_threshold,
+                            value_type=float,
+                        ),
                         "image_size": ParameterValue(yolo_image_size, value_type=int),
-                        "max_detections": ParameterValue(yolo_max_detections, value_type=int),
+                        "max_detections": ParameterValue(
+                            yolo_max_detections,
+                            value_type=int,
+                        ),
                         "classes": yolo_classes,
                         "device": yolo_device,
                     }
@@ -461,50 +391,40 @@ def generate_launch_description():
                 output="screen",
                 condition=IfCondition(enable_gimbal_tracking),
                 parameters=[
+                    gimbal_config_file,
                     {
                         "detections_topic": yolo_detections_topic,
                         "image_topic": camera_image_topic,
                         "vehicle_command_topic": vehicle_command_topic,
-                        "error_topic": gimbal_error_topic,
-                        "tracking_active_topic": gimbal_tracking_active_topic,
                         "target_class_id": gimbal_target_class_id,
                         "min_score": ParameterValue(gimbal_min_score, value_type=float),
-                        "control_rate_hz": ParameterValue(gimbal_control_rate_hz, value_type=float),
-                        "lost_timeout_s": ParameterValue(gimbal_lost_timeout_s, value_type=float),
-                        "deadband_normalized": ParameterValue(
-                            gimbal_deadband_normalized, value_type=float
-                        ),
                         "yaw_rate_gain_deg_s": ParameterValue(
-                            gimbal_yaw_rate_gain_deg_s, value_type=float
+                            gimbal_yaw_rate_gain_deg_s,
+                            value_type=float,
                         ),
                         "pitch_rate_gain_deg_s": ParameterValue(
-                            gimbal_pitch_rate_gain_deg_s, value_type=float
+                            gimbal_pitch_rate_gain_deg_s,
+                            value_type=float,
                         ),
-                        "max_yaw_rate_deg_s": ParameterValue(
-                            gimbal_max_yaw_rate_deg_s, value_type=float
+                        "yaw_error_sign": ParameterValue(
+                            gimbal_yaw_error_sign,
+                            value_type=float,
                         ),
-                        "max_pitch_rate_deg_s": ParameterValue(
-                            gimbal_max_pitch_rate_deg_s, value_type=float
-                        ),
-                        "yaw_error_sign": ParameterValue(gimbal_yaw_error_sign, value_type=float),
                         "pitch_error_sign": ParameterValue(
-                            gimbal_pitch_error_sign, value_type=float
+                            gimbal_pitch_error_sign,
+                            value_type=float,
                         ),
-                        "initial_yaw_deg": ParameterValue(gimbal_initial_yaw_deg, value_type=float),
-                        "initial_pitch_deg": ParameterValue(
-                            gimbal_initial_pitch_deg, value_type=float
-                        ),
-                        "min_yaw_deg": ParameterValue(gimbal_min_yaw_deg, value_type=float),
-                        "max_yaw_deg": ParameterValue(gimbal_max_yaw_deg, value_type=float),
-                        "min_pitch_deg": ParameterValue(gimbal_min_pitch_deg, value_type=float),
-                        "max_pitch_deg": ParameterValue(gimbal_max_pitch_deg, value_type=float),
                         "target_system": ParameterValue(target_system, value_type=int),
-                        "target_component": ParameterValue(target_component, value_type=int),
+                        "target_component": ParameterValue(
+                            target_component,
+                            value_type=int,
+                        ),
                         "source_system": ParameterValue(source_system, value_type=int),
-                        "source_component": ParameterValue(source_component, value_type=int),
-                        "gimbal_device_id": ParameterValue(gimbal_device_id, value_type=float),
-                        "gimbal_manager_flags": ParameterValue(gimbal_manager_flags, value_type=float),
-                    }
+                        "source_component": ParameterValue(
+                            source_component,
+                            value_type=int,
+                        ),
+                    },
                 ],
             ),
         ]
