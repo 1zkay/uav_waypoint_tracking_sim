@@ -1,27 +1,13 @@
-# PX4 local NED frame: x forward/north, y right/east, z down.
-# Negative z means altitude above the takeoff point.
+# Host UAV hold point in PX4 local NED.
+# x forward/north, y right/east, z down; negative z means altitude above home.
+# This profile keeps x500_0 stationary so the gimbal, not the aircraft body,
+# performs the target-centering visual-servo task.
 frame: NED
-acceptance_radius_m: 1.0
-dwell_time_s: 0.8
+acceptance_radius_m: 0.5
+dwell_time_s: 0.5
 control_rate_hz: 10.0
 takeoff_warmup_s: 1.5
-land_at_end: true
-yaw_mode: face_next_waypoint
+land_at_end: false
+yaw_mode: fixed_north
 waypoints:
-  - [5.66, 5.0, -5.0]
-  - [7.39, 3.54, -5.0]
-  - [8.0, 0.0, -5.0]
-  - [7.39, -3.54, -5.0]
-  - [5.66, -5.0, -5.0]
-  - [3.06, -3.54, -5.0]
   - [0.0, 0.0, -5.0]
-  - [-3.06, 3.54, -5.0]
-  - [-5.66, 5.0, -5.0]
-  - [-7.39, 3.54, -5.0]
-  - [-8.0, 0.0, -5.0]
-  - [-7.39, -3.54, -5.0]
-  - [-5.66, -5.0, -5.0]
-  - [-3.06, -3.54, -5.0]
-  - [0.0, 0.0, -5.0]
-  - [3.06, 3.54, -5.0]
-  - [5.66, 5.0, -5.0]
