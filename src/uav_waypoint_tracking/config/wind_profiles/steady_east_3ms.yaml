@@ -1,0 +1,32 @@
+enabled: true
+frame: ENU
+
+# Gazebo ENU: 3 m/s wind toward east.
+linear_velocity_mps: [3.0, 0.0, 0.0]
+
+wind_effects:
+  force_approximation_scaling_factor: 1.0
+  horizontal:
+    magnitude:
+      time_for_rise: 10.0
+      sin:
+        amplitude_percent: 0.0
+        period: 60.0
+      noise:
+        type: gaussian
+        mean: 0.0
+        stddev: 0.0
+    direction:
+      time_for_rise: 30.0
+      sin:
+        amplitude: 0.0
+        period: 20.0
+      noise:
+        type: gaussian
+        mean: 0.0
+        stddev: 0.0
+  vertical:
+    noise:
+      type: gaussian
+      mean: 0.0
+      stddev: 0.0

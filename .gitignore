@@ -1,0 +1,21 @@
+# ROS 2 / colcon generated output
+/build/
+/install/
+/log/
+
+# External dependency linked from the existing PX4 ROS workspace
+/src/px4_msgs
+
+# Python cache and test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editor and local runtime files
+.vscode/
+.idea/
+*.log
+*.bag
+*.db3

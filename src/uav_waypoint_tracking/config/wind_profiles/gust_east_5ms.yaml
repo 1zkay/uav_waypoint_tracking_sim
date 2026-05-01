@@ -1,0 +1,32 @@
+enabled: true
+frame: ENU
+
+# Gazebo ENU: 5 m/s base wind toward east with stronger gusts.
+linear_velocity_mps: [5.0, 0.0, 0.0]
+
+wind_effects:
+  force_approximation_scaling_factor: 1.0
+  horizontal:
+    magnitude:
+      time_for_rise: 10.0
+      sin:
+        amplitude_percent: 0.08
+        period: 45.0
+      noise:
+        type: gaussian
+        mean: 0.0
+        stddev: 0.0004
+    direction:
+      time_for_rise: 30.0
+      sin:
+        amplitude: 0.5
+        period: 18.0
+      noise:
+        type: gaussian
+        mean: 0.0
+        stddev: 0.05
+  vertical:
+    noise:
+      type: gaussian
+      mean: 0.0
+      stddev: 0.05
