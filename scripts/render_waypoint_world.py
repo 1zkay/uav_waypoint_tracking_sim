@@ -214,7 +214,7 @@ def make_waypoint_markers(points: list[Point3], acceptance_radius: float) -> ET.
             mast_height,
             color,
         )
-        add_sphere_visual(link, f"{marker_name}_target", point, 0.36, color)
+        add_sphere_visual(link, f"{marker_name}_target", point, 0.072, color)
         add_cylinder_visual(
             link,
             f"{marker_name}_acceptance",

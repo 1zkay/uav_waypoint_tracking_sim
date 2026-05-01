@@ -3,7 +3,7 @@ set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SIM_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-WAYPOINTS_FILE="${WAYPOINTS_FILE:-${SIM_ROOT}/src/uav_waypoint_tracking/config/waypoints.yaml}"
+WAYPOINTS_FILE="${WAYPOINTS_FILE:-${SIM_ROOT}/src/uav_waypoint_tracking/config/target_waypoints.yaml}"
 PX4_ROS_NAMESPACE="${PX4_ROS_NAMESPACE:-/px4_1}"
 TARGET_NODE_NAMESPACE="${TARGET_NODE_NAMESPACE:-target}"
 TARGET_SYSTEM="${TARGET_SYSTEM:-2}"

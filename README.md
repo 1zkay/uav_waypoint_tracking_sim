@@ -75,21 +75,25 @@ cd /home/zk/uav_waypoint_tracking_sim
 `VehicleCommand.target_system` 设为 `2`。`scripts/start_target_waypoint_tracking.sh`
 已经按这个规则配置。`px4_instance > 0` 时不要复用主机的 `/fmu/in/*` 话题。
 
-默认航点在 `src/uav_waypoint_tracking/config/waypoints.yaml`，坐标系是 PX4 本地 NED：
+主机默认航点在 `src/uav_waypoint_tracking/config/waypoints.yaml`，目标机默认航点在
+`src/uav_waypoint_tracking/config/target_waypoints.yaml`。两者坐标系都是 PX4 本地 NED：
 
 - `x`: 北/前
 - `y`: 东/右
 - `z`: 下，起飞点上方 5 m 写作 `-5.0`
 
-只需要修改这个 YAML。`scripts/start_px4_gazebo.sh` 会在启动前自动根据同一个 YAML
+只改主机航点时修改 `waypoints.yaml`；只改目标机轨迹时修改 `target_waypoints.yaml`。
+`scripts/start_px4_gazebo.sh` 会在启动前自动根据主机 YAML
 生成 Gazebo 航点标记 world，并同步到 PX4 的 worlds 目录；`scripts/start_waypoint_tracking.sh`
-也会默认把同一个 YAML 传给控制节点和 RViz 可视化节点。不要手工维护两份航点。
+也会默认把同一个主机 YAML 传给控制节点和 RViz 可视化节点。目标机启动脚本默认使用
+`target_waypoints.yaml`，当前轨迹是在 `x-z` 垂直平面内的椭圆。
 
 使用自定义航点文件时，PX4/Gazebo 终端和 ROS 终端都传入同一个变量：
 
 ```bash
 WAYPOINTS_FILE=/home/zk/my_waypoints.yaml ./scripts/start_px4_gazebo.sh
 WAYPOINTS_FILE=/home/zk/my_waypoints.yaml ./scripts/start_waypoint_tracking.sh
+WAYPOINTS_FILE=/home/zk/my_target_waypoints.yaml ./scripts/start_target_waypoint_tracking.sh
 ```
 
 Gazebo 如果暂停，点击左下角播放按钮。航点仿真默认使用
