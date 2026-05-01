@@ -1,0 +1,25 @@
+yolo_tracker:
+  ros__parameters:
+    # Input/output topics are normally overridden by the launch file so this
+    # config can be reused with different camera namespaces.
+    weights_path: /home/zk/uav_waypoint_tracking_sim/yolov8s.pt
+    image_topic: /x500_0/camera/image_raw
+    tracks_topic: /x500_0/yolo/tracks
+    annotated_image_topic: /x500_0/yolo/tracks_image
+
+    # Ultralytics tracker backend. Use bytetrack.yaml for ByteTrack or
+    # botsort.yaml for BoT-SORT when available in the ultralytics package.
+    tracker_config: bytetrack.yaml
+
+    # YOLO inference parameters.
+    confidence_threshold: 0.25
+    iou_threshold: 0.45
+    image_size: 640
+    max_detections: 100
+    classes: ""
+    device: ""
+
+    # Publication behavior.
+    publish_annotated_image: true
+    publish_tracks: true
+    publish_untracked_detections: false
