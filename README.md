@@ -124,6 +124,16 @@ ENABLE_YOLO_DETECTION=false ./scripts/start_waypoint_tracking.sh
 ENABLE_CAMERA_BRIDGE=false ENABLE_YOLO_DETECTION=false ./scripts/start_waypoint_tracking.sh
 ```
 
+查看带 YOLO 标签的相机窗口时，`rqt_image_view` 终端不要激活 `/home/zk/px4-venv`，
+否则可能找不到系统 PyQt5：
+
+```bash
+deactivate
+source /opt/ros/jazzy/setup.bash
+source /home/zk/uav_waypoint_tracking_sim/install/setup.bash
+ros2 run rqt_image_view rqt_image_view /x500_0/yolo/image_annotated
+```
+
 默认风场在 `src/uav_waypoint_tracking/config/wind.yaml`，坐标系是 Gazebo ENU：
 
 - `linear_velocity_mps[0]`: 向东风速
