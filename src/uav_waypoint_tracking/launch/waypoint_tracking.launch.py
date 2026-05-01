@@ -35,20 +35,9 @@ def generate_launch_description():
     camera_gazebo_topic = LaunchConfiguration("camera_gazebo_topic")
     camera_image_topic = LaunchConfiguration("camera_image_topic")
 
-    yolo_weights_path = LaunchConfiguration("yolo_weights_path")
-    yolo_confidence_threshold = LaunchConfiguration("yolo_confidence_threshold")
-    yolo_iou_threshold = LaunchConfiguration("yolo_iou_threshold")
-    yolo_image_size = LaunchConfiguration("yolo_image_size")
-    yolo_max_detections = LaunchConfiguration("yolo_max_detections")
-    yolo_classes = LaunchConfiguration("yolo_classes")
-    yolo_device = LaunchConfiguration("yolo_device")
-
-    enable_yolo_detection = LaunchConfiguration("enable_yolo_detection")
-    yolo_detections_topic = LaunchConfiguration("yolo_detections_topic")
-    yolo_annotated_image_topic = LaunchConfiguration("yolo_annotated_image_topic")
-
     enable_yolo_tracking = LaunchConfiguration("enable_yolo_tracking")
     yolo_tracking_config_file = LaunchConfiguration("yolo_tracking_config_file")
+    yolo_weights_path = LaunchConfiguration("yolo_weights_path")
     yolo_tracks_topic = LaunchConfiguration("yolo_tracks_topic")
     yolo_tracks_annotated_image_topic = LaunchConfiguration(
         "yolo_tracks_annotated_image_topic"
@@ -186,58 +175,8 @@ def generate_launch_description():
                 description="ROS 2 image topic for the bridged x500_0 camera image.",
             ),
             DeclareLaunchArgument(
-                "yolo_weights_path",
-                default_value="/home/zk/uav_waypoint_tracking_sim/yolov8s.pt",
-                description="YOLO weights used by detector and tracker nodes.",
-            ),
-            DeclareLaunchArgument(
-                "yolo_confidence_threshold",
-                default_value="0.25",
-                description="YOLO confidence threshold.",
-            ),
-            DeclareLaunchArgument(
-                "yolo_iou_threshold",
-                default_value="0.45",
-                description="YOLO non-max suppression IoU threshold.",
-            ),
-            DeclareLaunchArgument(
-                "yolo_image_size",
-                default_value="640",
-                description="YOLO inference image size.",
-            ),
-            DeclareLaunchArgument(
-                "yolo_max_detections",
-                default_value="100",
-                description="Maximum YOLO detections per image.",
-            ),
-            DeclareLaunchArgument(
-                "yolo_classes",
-                default_value="",
-                description="Optional comma-separated YOLO class ids. Empty detects all classes.",
-            ),
-            DeclareLaunchArgument(
-                "yolo_device",
-                default_value="",
-                description="Optional YOLO device, for example cpu, 0, or cuda:0. Empty lets ultralytics choose.",
-            ),
-            DeclareLaunchArgument(
-                "enable_yolo_detection",
-                default_value="false",
-                description="Start frame-by-frame YOLO detection.",
-            ),
-            DeclareLaunchArgument(
-                "yolo_detections_topic",
-                default_value="/x500_0/yolo/detections",
-                description="YOLO Detection2DArray output topic.",
-            ),
-            DeclareLaunchArgument(
-                "yolo_annotated_image_topic",
-                default_value="/x500_0/yolo/image_annotated",
-                description="YOLO detection annotated image output topic.",
-            ),
-            DeclareLaunchArgument(
                 "enable_yolo_tracking",
-                default_value="false",
+                default_value="true",
                 description="Start YOLO ByteTrack tracking with persistent track ids.",
             ),
             DeclareLaunchArgument(
@@ -250,6 +189,11 @@ def generate_launch_description():
                     ]
                 ),
                 description="YAML parameter file for yolo_tracker.",
+            ),
+            DeclareLaunchArgument(
+                "yolo_weights_path",
+                default_value="/home/zk/uav_waypoint_tracking_sim/yolov8s.pt",
+                description="YOLO weights used by yolo_tracker.",
             ),
             DeclareLaunchArgument(
                 "yolo_tracks_topic",
@@ -280,7 +224,7 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "gimbal_input_topic",
                 default_value="/x500_0/yolo/tracks",
-                description="Detection2DArray topic consumed by gimbal_target_tracker. Use /x500_0/yolo/detections to bypass tracking.",
+                description="Detection2DArray topic consumed by gimbal_target_tracker.",
             ),
             Node(
                 package="uav_waypoint_tracking",
@@ -361,28 +305,6 @@ def generate_launch_description():
             ),
             Node(
                 package="uav_waypoint_tracking",
-                executable="yolo_detector",
-                name="yolo_detector",
-                namespace=node_namespace,
-                output="screen",
-                condition=IfCondition(enable_yolo_detection),
-                parameters=[
-                    {
-                        "weights_path": yolo_weights_path,
-                        "image_topic": camera_image_topic,
-                        "detections_topic": yolo_detections_topic,
-                        "annotated_image_topic": yolo_annotated_image_topic,
-                        "confidence_threshold": ParameterValue(yolo_confidence_threshold, value_type=float),
-                        "iou_threshold": ParameterValue(yolo_iou_threshold, value_type=float),
-                        "image_size": ParameterValue(yolo_image_size, value_type=int),
-                        "max_detections": ParameterValue(yolo_max_detections, value_type=int),
-                        "classes": yolo_classes,
-                        "device": yolo_device,
-                    }
-                ],
-            ),
-            Node(
-                package="uav_waypoint_tracking",
                 executable="yolo_tracker",
                 name="yolo_tracker",
                 namespace=node_namespace,
@@ -395,12 +317,6 @@ def generate_launch_description():
                         "image_topic": camera_image_topic,
                         "tracks_topic": yolo_tracks_topic,
                         "annotated_image_topic": yolo_tracks_annotated_image_topic,
-                        "confidence_threshold": ParameterValue(yolo_confidence_threshold, value_type=float),
-                        "iou_threshold": ParameterValue(yolo_iou_threshold, value_type=float),
-                        "image_size": ParameterValue(yolo_image_size, value_type=int),
-                        "max_detections": ParameterValue(yolo_max_detections, value_type=int),
-                        "classes": yolo_classes,
-                        "device": yolo_device,
                     },
                 ],
             ),
