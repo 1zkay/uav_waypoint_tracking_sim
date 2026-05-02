@@ -136,7 +136,7 @@
     <include>
       <name>x500_1</name>
       <uri>model://x500_waypoint_wind</uri>
-      <pose>0 8 0 0 0 0</pose>
+      <pose>0 5 0 0 0 0</pose>
     </include>
     <light name='sunUTC' type='directional'>
       <pose>0 0 500 0 -0 0</pose>
