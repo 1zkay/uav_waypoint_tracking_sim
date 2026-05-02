@@ -10,6 +10,7 @@
 2. 主机云台相机图像：`/x500_0/camera/image_raw`。
 3. YOLO + ByteTrack 跟踪结果：`/x500_0/yolo/tracks`，类型为 `vision_msgs/Detection2DArray`。
 4. `Detection2D.id` 表示跨帧持续的 `track_id`，不是单帧检测序号。
+5. 云台节点默认锁定同一个 `track_id`；目标短时丢失时保持原云台指令，丢失超过 `lost_timeout_s` 后释放锁定并允许重新捕获。
 
 数据流如下：
 
@@ -21,6 +22,9 @@ yolo_tracker(ByteTrack) ──► /x500_0/yolo/tracks
         │                              │
         │                              ▼
         │                 gimbal_target_tracker
+        │                    ▲         │
+        │                    │         │
+        │     /fmu/out/gimbal_device_attitude_status
         │                              │
         │                              ▼
         └────────────────► /fmu/in/vehicle_command
@@ -35,7 +39,7 @@ yolo_tracker(ByteTrack) ──► /x500_0/yolo/tracks
 - 避免 `yolo_detector` 与 `yolo_tracker` 同时运行造成重复 YOLO 推理；
 - 使用 `/x500_0/yolo/tracks` 作为唯一视觉输出，接口更清晰；
 - 保持 `vision_msgs/Detection2DArray` 消息类型不变，降低下游节点耦合；
-- 通过 `Detection2D.id` 保留跨帧 track id，方便后续扩展“锁定同一目标”。
+- 通过 `Detection2D.id` 保留跨帧 track id，云台节点可以锁定同一目标，避免多目标场景中频繁切换。
 
 ## 与开源 ROS 仓库的关系
 
@@ -78,7 +82,8 @@ ENABLE_GIMBAL_TRACKING=false ./scripts/start_waypoint_tracking.sh
 ros2 run uav_waypoint_tracking gimbal_target_tracker \
   --ros-args \
   -p detections_topic:=/x500_0/yolo/tracks \
-  -p image_topic:=/x500_0/camera/image_raw \
+  -p camera_info_topic:=/x500_0/camera/camera_info \
+  -p gimbal_attitude_topic:=/fmu/out/gimbal_device_attitude_status \
   -p vehicle_command_topic:=/fmu/in/vehicle_command
 ```
 
@@ -104,16 +109,22 @@ src/uav_waypoint_tracking/config/gimbal_tracking.yaml
 `gimbal_tracking.yaml` 管理云台视觉伺服参数，例如：
 
 - `target_class_id`
+- `target_track_id`
+- `lock_target_track`
 - `min_score`
-- `image_width`
-- `image_height`
-- `horizontal_fov_rad`
+- `lost_timeout_s`
+- `fallback_fx_px`
+- `fallback_fy_px`
+- `fallback_cx_px`
+- `fallback_cy_px`
 - `deadband_angle_deg`
 - `yaw_rate_gain_s_inv`
 - `pitch_rate_gain_s_inv`
 - `yaw_error_sign`
 - `pitch_error_sign`
+- `yaw_frame`
 - `hold_last_command_on_loss`
+- `use_gimbal_feedback`
 
 配置优先级为：
 
@@ -139,19 +150,26 @@ GIMBAL_INPUT_TOPIC=/x500_0/yolo/tracks \
 - `ENABLE_GIMBAL_TRACKING`：是否启动视觉闭环云台跟踪，`start_waypoint_tracking.sh` 默认 `true`。
 - `YOLO_TRACKS_TOPIC`：`yolo_tracker` 发布的跟踪结果 topic。
 - `GIMBAL_INPUT_TOPIC`：`gimbal_target_tracker` 订阅的 `Detection2DArray` topic，默认等于 `YOLO_TRACKS_TOPIC`。
+- `GIMBAL_ATTITUDE_TOPIC`：云台真实姿态反馈 topic，默认 `/fmu/out/gimbal_device_attitude_status`。
+- `CAMERA_INFO_TOPIC`：云台节点订阅的 ROS `sensor_msgs/CameraInfo` topic，默认 `/x500_0/camera/camera_info`。
 - `YOLO_TRACKING_CONFIG_FILE`：可选，自定义 YOLO/ByteTrack 参数文件。
 - `GIMBAL_CONFIG_FILE`：可选，自定义云台控制参数文件。
 
 ## 控制律
 
-云台节点使用云台相机的针孔模型，把跟踪框中心的像素误差转换成视线角误差。当前 Gazebo 相机参数为 `1280x720`，水平视场角 `horizontal_fov_rad=2.0`：
+云台节点优先订阅 `sensor_msgs/CameraInfo`，使用相机内参矩阵 `K` 中的独立焦距和主点，把跟踪框中心的像素误差转换成视线角误差：
 
 ```text
-fx = image_width / (2 * tan(horizontal_fov_rad / 2))
+fx = K[0]
+fy = K[4]
+cx = K[2]
+cy = K[5]
 
-yaw_error_deg   = degrees(atan2(track_center_x - image_width  / 2, fx))
-pitch_error_deg = degrees(atan2(track_center_y - image_height / 2, fx))
+yaw_error_deg   = degrees(atan2(track_center_x - cx, fx))
+pitch_error_deg = degrees(atan2(track_center_y - cy, fy))
 ```
+
+如果 `CameraInfo` 暂时未到达，节点使用 YAML 中的显式 fallback 内参；fallback 是启动容错，不是主路径。
 
 然后进行死区处理、限幅和积分：
 
@@ -165,13 +183,31 @@ pitch_cmd = clamp(pitch_cmd + pitch_rate * dt, min_pitch, max_pitch)
 
 最后通过 `VehicleCommand` 发送 `MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW`。默认角度单位为 degree。诊断话题 `/x500_0/gimbal_target_tracker/error` 中的 `vector.x/y` 现在分别表示 yaw/pitch 视线角误差，单位为 degree，`vector.z` 为目标置信度。
 
+`yaw_frame` 默认是 `vehicle`，节点会发送 MAVLink `GIMBAL_MANAGER_FLAGS_YAW_IN_VEHICLE_FRAME`，使 yaw 命令明确按机体系解释；如需地理系 yaw，可改为 `earth`，节点会发送 `GIMBAL_MANAGER_FLAGS_YAW_LOCK | GIMBAL_MANAGER_FLAGS_YAW_IN_EARTH_FRAME`，同时兼容当前 PX4 对 `YAW_LOCK` 的处理。
+
+节点默认订阅 `/fmu/out/gimbal_device_attitude_status`，并在反馈消息的 yaw frame 与当前 `yaw_frame` 配置一致时，用云台反馈四元数同步内部 `pitch/yaw` 状态；这样控制积分从实际云台角度继续，而不是只依赖上一次发送的命令。当前 Gazebo 云台反馈按 vehicle frame 发布，因此默认 `yaw_frame: vehicle` 与反馈一致。如果需要回退到纯命令积分，可将 `use_gimbal_feedback` 设为 `false`。
+
+## 目标锁定
+
+默认 `lock_target_track: true`。节点会在通过 `target_class_id`、`min_score` 筛选后锁定一个 `Detection2D.id`，后续只跟踪同一 `track_id`：
+
+```text
+target_track_id 非空：只跟踪指定 track id
+target_track_id 为空且 lock_target_track=true：自动锁定首次选中的 track id
+锁定目标丢失超过 lost_timeout_s：释放自动锁定，允许重新捕获
+```
+
+如果只需要每帧跟踪最高置信度目标，可把 `lock_target_track` 设为 `false`。
+
 ## 验证话题
 
 启动后检查以下话题：
 
 ```bash
 ros2 topic list | rg 'x500_0/(camera|yolo|gimbal)'
+ros2 topic echo /x500_0/camera/camera_info --once
 ros2 topic echo /x500_0/yolo/tracks --once
+ros2 topic echo /fmu/out/gimbal_device_attitude_status --once
 ros2 topic echo /x500_0/gimbal_target_tracker/error --once
 ros2 topic echo /x500_0/gimbal_target_tracker/tracking_active --once
 ```
@@ -187,8 +223,10 @@ ros2 topic echo /x500_0/gimbal_target_tracker/tracking_active --once
 
 1. `/x500_0/yolo/tracks` 是否持续有跟踪框。
 2. `gimbal_tracking.yaml` 中的 `target_class_id` 是否和 YOLO 输出的 `class_id` 完全一致。
-3. `gimbal_tracking.yaml` 中的 `min_score` 是否过高。
-4. `GIMBAL_INPUT_TOPIC` 是否与 `YOLO_TRACKS_TOPIC` 一致。
+3. `gimbal_tracking.yaml` 中的 `target_track_id` 是否指定了当前不存在的 track id。
+4. `gimbal_tracking.yaml` 中的 `min_score` 是否过高。
+5. `/fmu/out/gimbal_device_attitude_status` 是否有云台姿态反馈。
+6. `GIMBAL_INPUT_TOPIC` 是否与 `YOLO_TRACKS_TOPIC` 一致。
 
 ## 调参建议
 
@@ -201,11 +239,10 @@ ros2 topic echo /x500_0/gimbal_target_tracker/tracking_active --once
 
 ## 局限性
 
-当前实现是基于图像误差的二维视觉伺服，不估计目标三维位置，也不预测目标运动。ByteTrack 可以提升跨帧目标连续性，但它仍依赖 YOLO 检测结果；当目标长时间遮挡、过小或置信度过低时，track id 可能丢失或切换。
+当前实现是基于图像误差的二维视觉伺服，不估计目标三维位置，也不预测目标运动。ByteTrack 可以提升跨帧目标连续性，但它仍依赖 YOLO 检测结果；当目标长时间遮挡、过小或置信度过低时，track id 可能丢失，并在释放锁定后重新捕获。
 
 如果后续要做更强的导引头/制导仿真，可以进一步增加：
 
-- 基于 `Detection2D.id` 的目标锁定策略，避免多目标场景中频繁切换目标；
-- 目标相对方位角、俯仰角估计；
 - 基于目标速度的前馈补偿；
+- 目标相对方位角、俯仰角估计；
 - 与无人机 0 航迹规划联动，使机体位置和云台角度共同保持目标可见。

@@ -34,6 +34,8 @@ def generate_launch_description():
     enable_camera_bridge = LaunchConfiguration("enable_camera_bridge")
     camera_gazebo_topic = LaunchConfiguration("camera_gazebo_topic")
     camera_image_topic = LaunchConfiguration("camera_image_topic")
+    camera_info_gazebo_topic = LaunchConfiguration("camera_info_gazebo_topic")
+    camera_info_topic = LaunchConfiguration("camera_info_topic")
 
     enable_yolo_tracking = LaunchConfiguration("enable_yolo_tracking")
     yolo_tracking_config_file = LaunchConfiguration("yolo_tracking_config_file")
@@ -46,6 +48,7 @@ def generate_launch_description():
     enable_gimbal_tracking = LaunchConfiguration("enable_gimbal_tracking")
     gimbal_config_file = LaunchConfiguration("gimbal_config_file")
     gimbal_input_topic = LaunchConfiguration("gimbal_input_topic")
+    gimbal_attitude_topic = LaunchConfiguration("gimbal_attitude_topic")
 
     return LaunchDescription(
         [
@@ -175,6 +178,16 @@ def generate_launch_description():
                 description="ROS 2 image topic for the bridged x500_0 camera image.",
             ),
             DeclareLaunchArgument(
+                "camera_info_gazebo_topic",
+                default_value="/world/waypoint_tracking/model/x500_0/link/camera_link/sensor/camera/camera_info",
+                description="Gazebo CameraInfo topic produced by the x500_0 gimbal camera.",
+            ),
+            DeclareLaunchArgument(
+                "camera_info_topic",
+                default_value="/x500_0/camera/camera_info",
+                description="ROS 2 CameraInfo topic for the x500_0 gimbal camera.",
+            ),
+            DeclareLaunchArgument(
                 "enable_yolo_tracking",
                 default_value="true",
                 description="Start YOLO ByteTrack tracking with persistent track ids.",
@@ -225,6 +238,11 @@ def generate_launch_description():
                 "gimbal_input_topic",
                 default_value="/x500_0/yolo/tracks",
                 description="Detection2DArray topic consumed by gimbal_target_tracker.",
+            ),
+            DeclareLaunchArgument(
+                "gimbal_attitude_topic",
+                default_value="/fmu/out/gimbal_device_attitude_status",
+                description="PX4 gimbal device attitude feedback topic.",
             ),
             Node(
                 package="uav_waypoint_tracking",
@@ -304,6 +322,21 @@ def generate_launch_description():
                 remappings=[(camera_gazebo_topic, camera_image_topic)],
             ),
             Node(
+                package="ros_gz_bridge",
+                executable="parameter_bridge",
+                name="x500_0_camera_info_bridge",
+                namespace=node_namespace,
+                output="screen",
+                condition=IfCondition(enable_camera_bridge),
+                arguments=[
+                    [
+                        camera_info_gazebo_topic,
+                        "@sensor_msgs/msg/CameraInfo@gz.msgs.CameraInfo",
+                    ]
+                ],
+                remappings=[(camera_info_gazebo_topic, camera_info_topic)],
+            ),
+            Node(
                 package="uav_waypoint_tracking",
                 executable="yolo_tracker",
                 name="yolo_tracker",
@@ -331,7 +364,8 @@ def generate_launch_description():
                     gimbal_config_file,
                     {
                         "detections_topic": gimbal_input_topic,
-                        "image_topic": camera_image_topic,
+                        "camera_info_topic": camera_info_topic,
+                        "gimbal_attitude_topic": gimbal_attitude_topic,
                         "vehicle_command_topic": vehicle_command_topic,
                         "target_system": ParameterValue(target_system, value_type=int),
                         "target_component": ParameterValue(target_component, value_type=int),
