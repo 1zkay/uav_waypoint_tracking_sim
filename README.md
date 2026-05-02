@@ -167,6 +167,16 @@ source /home/zk/uav_waypoint_tracking_sim/install/setup.bash
 ros2 run rqt_image_view rqt_image_view /x500_0/yolo/tracks_image
 ```
 
+手动执行 `ros2 topic echo`、`ros2 interface show` 等检查命令时，每个新终端都要先加载本工作区：
+
+```bash
+cd /home/zk/uav_waypoint_tracking_sim
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+```
+
+如果 `/fmu/out/gimbal_device_attitude_status` 提示 `px4_msgs/msg/GimbalDeviceAttitudeStatus` 类型无效，通常就是当前终端没有加载本工作区的 `px4_msgs`，或者 ROS daemon 还缓存着旧环境；执行 `ros2 daemon stop && ros2 daemon start` 后再试。
+
 视觉链路常用配置文件：
 
 - `src/uav_waypoint_tracking/config/yolo_tracking.yaml`: YOLO/ByteTrack 参数，例如 `tracker_config`、`confidence_threshold`、`iou_threshold`、`image_size`、`classes`、`device`。

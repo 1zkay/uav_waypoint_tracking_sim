@@ -201,6 +201,21 @@ target_track_id 为空且 lock_target_track=true：自动锁定首次选中的 t
 
 ## 验证话题
 
+每个新终端执行 ROS 2 命令前都需要先加载本工作区环境，否则 `px4_msgs` 自定义消息无法解析，`ros2 topic echo /fmu/out/gimbal_device_attitude_status --once` 会报 `The message type 'px4_msgs/msg/GimbalDeviceAttitudeStatus' is invalid`：
+
+```bash
+cd /home/zk/uav_waypoint_tracking_sim
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+```
+
+如果刚刚切换过环境或重编译过 `px4_msgs`，先重启 ROS daemon：
+
+```bash
+ros2 daemon stop
+ros2 daemon start
+```
+
 启动后检查以下话题：
 
 ```bash
@@ -227,6 +242,8 @@ ros2 topic echo /x500_0/gimbal_target_tracker/tracking_active --once
 4. `gimbal_tracking.yaml` 中的 `min_score` 是否过高。
 5. `/fmu/out/gimbal_device_attitude_status` 是否有云台姿态反馈。
 6. `GIMBAL_INPUT_TOPIC` 是否与 `YOLO_TRACKS_TOPIC` 一致。
+
+如果 `ros2 topic echo /fmu/out/gimbal_device_attitude_status --once` 提示消息类型无效，优先检查当前终端是否已经 `source install/setup.bash`，并确认 `ros2 interface show px4_msgs/msg/GimbalDeviceAttitudeStatus` 能正常显示字段。
 
 ## 调参建议
 
