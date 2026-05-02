@@ -52,12 +52,13 @@ class GimbalTargetTracker(Node):
         self.declare_parameter("min_score", 0.25)
         self.declare_parameter("control_rate_hz", 20.0)
         self.declare_parameter("lost_timeout_s", 0.5)
-        self.declare_parameter("image_width", 640.0)
-        self.declare_parameter("image_height", 480.0)
-        self.declare_parameter("deadband_normalized", 0.03)
+        self.declare_parameter("image_width", 1280.0)
+        self.declare_parameter("image_height", 720.0)
+        self.declare_parameter("horizontal_fov_rad", 2.0)
+        self.declare_parameter("deadband_angle_deg", 1.5)
 
-        self.declare_parameter("yaw_rate_gain_deg_s", 45.0)
-        self.declare_parameter("pitch_rate_gain_deg_s", 35.0)
+        self.declare_parameter("yaw_rate_gain_s_inv", 0.8)
+        self.declare_parameter("pitch_rate_gain_s_inv", 0.85)
         self.declare_parameter("max_yaw_rate_deg_s", 60.0)
         self.declare_parameter("max_pitch_rate_deg_s", 45.0)
         self.declare_parameter("yaw_error_sign", 1.0)
@@ -96,15 +97,18 @@ class GimbalTargetTracker(Node):
         self.lost_timeout_s = float(self.get_parameter("lost_timeout_s").value)
         self.image_width = float(self.get_parameter("image_width").value)
         self.image_height = float(self.get_parameter("image_height").value)
-        self.deadband_normalized = float(
-            self.get_parameter("deadband_normalized").value
+        self.horizontal_fov_rad = float(
+            self.get_parameter("horizontal_fov_rad").value
+        )
+        self.deadband_angle_deg = float(
+            self.get_parameter("deadband_angle_deg").value
         )
 
-        self.yaw_rate_gain_deg_s = float(
-            self.get_parameter("yaw_rate_gain_deg_s").value
+        self.yaw_rate_gain_s_inv = float(
+            self.get_parameter("yaw_rate_gain_s_inv").value
         )
-        self.pitch_rate_gain_deg_s = float(
-            self.get_parameter("pitch_rate_gain_deg_s").value
+        self.pitch_rate_gain_s_inv = float(
+            self.get_parameter("pitch_rate_gain_s_inv").value
         )
         self.max_yaw_rate_deg_s = float(
             self.get_parameter("max_yaw_rate_deg_s").value
@@ -183,7 +187,8 @@ class GimbalTargetTracker(Node):
             "Gimbal target tracker ready: "
             f"detections={self.detections_topic}, image={self.image_topic}, "
             f"command={self.vehicle_command_topic}, target={target_filter}, "
-            f"rate={self.control_rate_hz:.1f} Hz"
+            f"rate={self.control_rate_hz:.1f} Hz, "
+            f"hfov={math.degrees(self._horizontal_fov_rad()):.1f} deg"
         )
 
     def _image_callback(self, msg: Image) -> None:
@@ -247,17 +252,19 @@ class GimbalTargetTracker(Node):
             self._handle_missing_target()
             return
 
-        error_x, error_y = self._normalized_image_error(self.last_detection)
-        error_x = self._apply_deadband(error_x)
-        error_y = self._apply_deadband(error_y)
+        yaw_error_deg, pitch_error_deg = self._camera_angle_error_deg(
+            self.last_detection
+        )
+        yaw_error_deg = self._apply_angle_deadband(yaw_error_deg)
+        pitch_error_deg = self._apply_angle_deadband(pitch_error_deg)
 
         yaw_rate_deg_s = clamp(
-            self.yaw_error_sign * self.yaw_rate_gain_deg_s * error_x,
+            self.yaw_error_sign * self.yaw_rate_gain_s_inv * yaw_error_deg,
             -self.max_yaw_rate_deg_s,
             self.max_yaw_rate_deg_s,
         )
         pitch_rate_deg_s = clamp(
-            self.pitch_error_sign * self.pitch_rate_gain_deg_s * error_y,
+            self.pitch_error_sign * self.pitch_rate_gain_s_inv * pitch_error_deg,
             -self.max_pitch_rate_deg_s,
             self.max_pitch_rate_deg_s,
         )
@@ -274,7 +281,12 @@ class GimbalTargetTracker(Node):
         )
 
         now_us = self._now_us()
-        self._publish_error(now_us, error_x, error_y, self.last_detection.score)
+        self._publish_error(
+            now_us,
+            yaw_error_deg,
+            pitch_error_deg,
+            self.last_detection.score,
+        )
         self._publish_gimbal_command(now_us, self.pitch_deg, self.yaw_deg)
 
     def _handle_missing_target(self) -> None:
@@ -304,32 +316,45 @@ class GimbalTargetTracker(Node):
             and now_s - self.last_detection_time_s <= self.lost_timeout_s
         )
 
-    def _normalized_image_error(
+    def _camera_angle_error_deg(
         self,
         detection: SelectedDetection,
     ) -> tuple[float, float]:
-        half_width = max(self.image_width * 0.5, 1.0)
-        half_height = max(self.image_height * 0.5, 1.0)
-        error_x = (detection.center_x - half_width) / half_width
-        error_y = (detection.center_y - half_height) / half_height
-        return clamp(error_x, -1.0, 1.0), clamp(error_y, -1.0, 1.0)
+        image_width = max(self.image_width, 1.0)
+        image_height = max(self.image_height, 1.0)
+        center_x = clamp(detection.center_x, 0.0, image_width)
+        center_y = clamp(detection.center_y, 0.0, image_height)
+        focal_length_px = image_width / (
+            2.0 * math.tan(self._horizontal_fov_rad() / 2.0)
+        )
 
-    def _apply_deadband(self, value: float) -> float:
-        return 0.0 if abs(value) < self.deadband_normalized else value
+        yaw_error_rad = math.atan2(center_x - image_width * 0.5, focal_length_px)
+        pitch_error_rad = math.atan2(center_y - image_height * 0.5, focal_length_px)
+        return math.degrees(yaw_error_rad), math.degrees(pitch_error_rad)
+
+    def _horizontal_fov_rad(self) -> float:
+        return clamp(
+            self.horizontal_fov_rad,
+            math.radians(1.0),
+            math.radians(179.0),
+        )
+
+    def _apply_angle_deadband(self, value: float) -> float:
+        return 0.0 if abs(value) < self.deadband_angle_deg else value
 
     def _publish_error(
         self,
         now_us: int,
-        error_x: float,
-        error_y: float,
+        yaw_error_deg: float,
+        pitch_error_deg: float,
         score: float,
     ) -> None:
         msg = Vector3Stamped()
         msg.header.stamp.sec = int(now_us // 1_000_000)
         msg.header.stamp.nanosec = int((now_us % 1_000_000) * 1000)
-        msg.header.frame_id = "camera_image"
-        msg.vector.x = float(error_x)
-        msg.vector.y = float(error_y)
+        msg.header.frame_id = "camera_link"
+        msg.vector.x = float(yaw_error_deg)
+        msg.vector.y = float(pitch_error_deg)
         msg.vector.z = float(score)
         self.error_pub.publish(msg)
 

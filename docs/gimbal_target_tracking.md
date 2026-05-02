@@ -105,9 +105,12 @@ src/uav_waypoint_tracking/config/gimbal_tracking.yaml
 
 - `target_class_id`
 - `min_score`
-- `deadband_normalized`
-- `yaw_rate_gain_deg_s`
-- `pitch_rate_gain_deg_s`
+- `image_width`
+- `image_height`
+- `horizontal_fov_rad`
+- `deadband_angle_deg`
+- `yaw_rate_gain_s_inv`
+- `pitch_rate_gain_s_inv`
 - `yaw_error_sign`
 - `pitch_error_sign`
 - `hold_last_command_on_loss`
@@ -141,24 +144,26 @@ GIMBAL_INPUT_TOPIC=/x500_0/yolo/tracks \
 
 ## 控制律
 
-云台节点使用跟踪框中心的图像平面归一化误差：
+云台节点使用云台相机的针孔模型，把跟踪框中心的像素误差转换成视线角误差。当前 Gazebo 相机参数为 `1280x720`，水平视场角 `horizontal_fov_rad=2.0`：
 
 ```text
-error_x = (track_center_x - image_width  / 2) / (image_width  / 2)
-error_y = (track_center_y - image_height / 2) / (image_height / 2)
+fx = image_width / (2 * tan(horizontal_fov_rad / 2))
+
+yaw_error_deg   = degrees(atan2(track_center_x - image_width  / 2, fx))
+pitch_error_deg = degrees(atan2(track_center_y - image_height / 2, fx))
 ```
 
 然后进行死区处理、限幅和积分：
 
 ```text
-yaw_rate   = yaw_error_sign   * yaw_gain   * error_x
-pitch_rate = pitch_error_sign * pitch_gain * error_y
+yaw_rate   = yaw_error_sign   * yaw_rate_gain_s_inv   * yaw_error_deg
+pitch_rate = pitch_error_sign * pitch_rate_gain_s_inv * pitch_error_deg
 
 yaw_cmd   = clamp(yaw_cmd   + yaw_rate   * dt, min_yaw,   max_yaw)
 pitch_cmd = clamp(pitch_cmd + pitch_rate * dt, min_pitch, max_pitch)
 ```
 
-最后通过 `VehicleCommand` 发送 `MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW`。默认角度单位为 degree。
+最后通过 `VehicleCommand` 发送 `MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW`。默认角度单位为 degree。诊断话题 `/x500_0/gimbal_target_tracker/error` 中的 `vector.x/y` 现在分别表示 yaw/pitch 视线角误差，单位为 degree，`vector.z` 为目标置信度。
 
 ## 验证话题
 
@@ -191,7 +196,7 @@ ros2 topic echo /x500_0/gimbal_target_tracker/tracking_active --once
 2. 再打开 `ENABLE_GIMBAL_TRACKING=true`，观察云台是否能把目标拉回画面中心。
 3. 如果目标向右偏，云台也继续向右导致更偏，反转 `gimbal_tracking.yaml` 中的 `yaw_error_sign`。
 4. 如果目标向上偏，云台也继续向上导致更偏，反转 `pitch_error_sign`。
-5. 目标在画面中振荡时，降低 `yaw_rate_gain_deg_s` 和 `pitch_rate_gain_deg_s`。
+5. 目标在画面中振荡时，降低 `yaw_rate_gain_s_inv` 和 `pitch_rate_gain_s_inv`。
 6. 目标移动快但云台跟不上时，适当提高增益和最大角速度。
 
 ## 局限性

@@ -170,7 +170,7 @@ ros2 run rqt_image_view rqt_image_view /x500_0/yolo/tracks_image
 视觉链路常用配置文件：
 
 - `src/uav_waypoint_tracking/config/yolo_tracking.yaml`: YOLO/ByteTrack 参数，例如 `tracker_config`、`confidence_threshold`、`iou_threshold`、`image_size`、`classes`、`device`。
-- `src/uav_waypoint_tracking/config/gimbal_tracking.yaml`: 云台视觉伺服参数，例如 `target_class_id`、`min_score`、`deadband_normalized`、`yaw_rate_gain_deg_s`、`pitch_rate_gain_deg_s`、`yaw_error_sign`、`pitch_error_sign`。
+- `src/uav_waypoint_tracking/config/gimbal_tracking.yaml`: 云台视觉伺服参数，例如 `target_class_id`、`min_score`、`horizontal_fov_rad`、`deadband_angle_deg`、`yaw_rate_gain_s_inv`、`pitch_rate_gain_s_inv`、`yaw_error_sign`、`pitch_error_sign`。
 
 ## 风场
 
@@ -249,7 +249,7 @@ LOG_ROOT=/home/zk/uav_logs RUN_ID=wind_3ms_figure8 ./scripts/start_waypoint_trac
 - `/x500_0/camera/image_raw`: 主机云台相机原始图像。
 - `/x500_0/yolo/tracks`: YOLO + ByteTrack 跟踪框，类型为 `vision_msgs/Detection2DArray`，其中 `Detection2D.id` 是跨帧 track id。
 - `/x500_0/yolo/tracks_image`: YOLO + ByteTrack 标注后的图像。
-- `/x500_0/gimbal_target_tracker/error`: 云台视觉伺服归一化图像误差。
+- `/x500_0/gimbal_target_tracker/error`: 云台视觉伺服视线角误差，`vector.x/y` 分别为 yaw/pitch 角误差，单位为 degree。
 - `/x500_0/gimbal_target_tracker/tracking_active`: 云台节点是否收到新鲜目标跟踪结果。
 - `/target/waypoint_markers`: 目标无人机航点可视化。
 - `/target/waypoint_path`: 目标无人机规划路径。
