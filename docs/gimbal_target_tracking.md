@@ -133,7 +133,7 @@ GIMBAL_INPUT_TOPIC=/x500_0/yolo/tracks \
 含义如下：
 
 - `ENABLE_YOLO_TRACKING`：是否启动 YOLO + ByteTrack 跟踪，默认 `true`。
-- `ENABLE_GIMBAL_TRACKING`：是否启动视觉闭环云台跟踪，默认 `false`。
+- `ENABLE_GIMBAL_TRACKING`：是否启动视觉闭环云台跟踪，`start_waypoint_tracking.sh` 默认 `true`。
 - `YOLO_TRACKS_TOPIC`：`yolo_tracker` 发布的跟踪结果 topic。
 - `GIMBAL_INPUT_TOPIC`：`gimbal_target_tracker` 订阅的 `Detection2DArray` topic，默认等于 `YOLO_TRACKS_TOPIC`。
 - `YOLO_TRACKING_CONFIG_FILE`：可选，自定义 YOLO/ByteTrack 参数文件。

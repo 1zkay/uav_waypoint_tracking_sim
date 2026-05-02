@@ -1,10 +1,7 @@
 gimbal_target_tracker:
   ros__parameters:
-    # Input and output topics are normally overridden by the launch file so that
-    # this config can be reused with different camera or PX4 namespaces.
-    detections_topic: /x500_0/yolo/detections
-    image_topic: /x500_0/camera/image_raw
-    vehicle_command_topic: /fmu/in/vehicle_command
+    # Runtime wiring such as input topics, command topics, and PX4 system IDs
+    # is supplied by launch files. Keep this file focused on reusable tuning.
     error_topic: /x500_0/gimbal_target_tracker/error
     tracking_active_topic: /x500_0/gimbal_target_tracker/tracking_active
 
@@ -33,11 +30,7 @@ gimbal_target_tracker:
     min_pitch_deg: -90.0
     max_pitch_deg: 30.0
 
-    # PX4 gimbal manager command parameters.
-    target_system: 1
-    target_component: 1
-    source_system: 1
-    source_component: 1
+    # PX4 gimbal manager command parameters that are not vehicle-specific.
     gimbal_device_id: 0.0
     gimbal_manager_flags: 0.0
 

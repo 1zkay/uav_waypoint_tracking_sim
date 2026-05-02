@@ -39,7 +39,7 @@ class GimbalTargetTracker(Node):
     def __init__(self) -> None:
         super().__init__("gimbal_target_tracker")
 
-        self.declare_parameter("detections_topic", "/x500_0/yolo/detections")
+        self.declare_parameter("detections_topic", "/x500_0/yolo/tracks")
         self.declare_parameter("image_topic", "/x500_0/camera/image_raw")
         self.declare_parameter("vehicle_command_topic", "/fmu/in/vehicle_command")
         self.declare_parameter("error_topic", "/x500_0/gimbal_target_tracker/error")

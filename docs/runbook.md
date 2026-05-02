@@ -22,7 +22,7 @@ ros2 topic echo /waypoint_path --once
 
 ```bash
 ros2 topic list | rg 'x500_0/(camera|yolo)'
-ros2 topic echo /x500_0/yolo/detections --once
+ros2 topic echo /x500_0/yolo/tracks --once
 ```
 
 目标无人机启动后，按官方多机规则会出现在 `/px4_1/...` namespace：
