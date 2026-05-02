@@ -59,9 +59,18 @@ add_launch_arg "waypoint_path_topic" "/${TARGET_NODE_NAMESPACE}/waypoint_path"
 add_launch_arg "vehicle_path_topic" "/${TARGET_NODE_NAMESPACE}/vehicle_path"
 add_launch_arg "run_id" "${RUN_ID}"
 
+# Target UAV tracking should only control the target vehicle trajectory.
+# Keep the host-camera vision and gimbal-servo pipeline owned by
+# scripts/start_waypoint_tracking.sh to avoid duplicate subscribers and
+# publishers on /x500_0/camera/* and /x500_0/yolo/*.
+add_launch_arg "enable_camera_bridge" "false"
+add_launch_arg "enable_yolo_tracking" "false"
+add_launch_arg "enable_gimbal_tracking" "false"
+
 if [[ -n "${LOG_ROOT}" ]]; then
   add_launch_arg "log_root" "${LOG_ROOT}"
 fi
 
 echo "Launching target waypoint tracker for ${PX4_ROS_NAMESPACE} with ${WAYPOINTS_FILE}"
+echo "Target vision/gimbal pipeline: disabled"
 exec ros2 launch uav_waypoint_tracking waypoint_tracking.launch.py "${launch_args[@]}"
