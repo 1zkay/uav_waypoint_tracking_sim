@@ -197,7 +197,7 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "enable_yolo_tracking",
                 default_value="true",
-                description="Start YOLO ByteTrack tracking with persistent track ids.",
+                description="Start YOLO BoT-SORT tracking with persistent track ids.",
             ),
             DeclareLaunchArgument(
                 "yolo_tracking_config_file",

@@ -274,7 +274,7 @@ PX4 Gazebo bridge 最终向这些 Gazebo topic 发布关节位置指令：
 | PX4 airframe 云台 mount 默认参数                         | `/home/zk/PX4-Autopilot/ROMFS/px4fmu_common/init.d-posix/airframes/4019_gz_x500_gimbal`        |
 | PX4 构建后的 airframe 副本                               | `/home/zk/PX4-Autopilot/build/px4_sitl_default/etc/init.d-posix/airframes/4019_gz_x500_gimbal` |
 | ROS 云台视觉伺服调参，不是硬件参数                       | `src/uav_waypoint_tracking/config/gimbal_tracking.yaml`                                        |
-| YOLO/ByteTrack 调参，不是硬件参数                        | `src/uav_waypoint_tracking/config/yolo_tracking.yaml`                                          |
+| YOLO/BoT-SORT 调参，不是硬件参数                        | `src/uav_waypoint_tracking/config/yolo_tracking.yaml`                                          |
 
 不要把 `install/` 作为硬件参数修改位置；它是 `colcon` 生成目录。
 

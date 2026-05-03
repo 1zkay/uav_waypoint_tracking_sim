@@ -4,11 +4,11 @@
 
 ## 设计结论
 
-当前仓库的视觉闭环主链路已经收敛为 **YOLO + ByteTrack 跟踪**，而不是逐帧检测：
+当前仓库的视觉闭环主链路已经收敛为 **YOLO + BoT-SORT 跟踪**，而不是逐帧检测：
 
 1. 双机 PX4 SITL：主机使用 `/fmu/...`，目标机使用 `/px4_1/fmu/...`。
 2. 主机云台相机图像：`/x500_0/camera/image_raw`。
-3. YOLO + ByteTrack 跟踪结果：`/x500_0/yolo/tracks`，类型为 `vision_msgs/Detection2DArray`。
+3. YOLO + BoT-SORT 跟踪结果：`/x500_0/yolo/tracks`，类型为 `vision_msgs/Detection2DArray`。
 4. `Detection2D.id` 表示跨帧持续的 `track_id`，不是单帧检测序号。
 5. 云台节点默认锁定同一个 `track_id`；目标短时丢失时保持原云台指令，丢失超过 `lost_timeout_s` 后释放锁定并允许重新捕获。
 
@@ -18,7 +18,7 @@
 /x500_0/camera/image_raw
         │
         ▼
-yolo_tracker(ByteTrack) ──► /x500_0/yolo/tracks
+yolo_tracker(BoT-SORT) ──► /x500_0/yolo/tracks
         │                              │
         │                              ▼
         │                 gimbal_target_tracker
@@ -31,7 +31,7 @@ yolo_tracker(ByteTrack) ──► /x500_0/yolo/tracks
         └──── configure ─► /fmu/in/vehicle_command
 ```
 
-`gimbal_target_tracker` 不控制无人机位置，只控制主机云台。无人机 0 的航点跟踪、目标机的航点跟踪、ByteTrack 目标跟踪和云台视觉伺服保持分层独立。
+`gimbal_target_tracker` 不控制无人机位置，只控制主机云台。无人机 0 的航点跟踪、目标机的航点跟踪、BoT-SORT 目标跟踪和云台视觉伺服保持分层独立。
 
 ## 为什么只保留 tracking
 
@@ -63,7 +63,7 @@ yolo_tracker(ByteTrack) ──► /x500_0/yolo/tracks
 ./scripts/start_target_waypoint_tracking.sh
 ```
 
-然后启动主机航点跟踪、相机桥接、ByteTrack 跟踪和云台视觉伺服：
+然后启动主机航点跟踪、相机桥接、BoT-SORT 跟踪和云台视觉伺服：
 
 ```bash
 ENABLE_GIMBAL_TRACKING=true ./scripts/start_waypoint_tracking.sh
@@ -98,9 +98,9 @@ src/uav_waypoint_tracking/config/yolo_tracking.yaml
 src/uav_waypoint_tracking/config/gimbal_tracking.yaml
 ```
 
-`yolo_tracking.yaml` 管理 YOLO/ByteTrack 参数，例如：
+`yolo_tracking.yaml` 管理 YOLO/BoT-SORT 参数，例如：
 
-- `tracker_config: bytetrack.yaml`
+- `tracker_config: botsort.yaml`
 - `confidence_threshold`
 - `iou_threshold`
 - `image_size`
@@ -114,6 +114,9 @@ src/uav_waypoint_tracking/config/gimbal_tracking.yaml
 - `target_track_id`
 - `lock_target_track`
 - `min_score`
+- `max_bbox_width_px`
+- `max_bbox_height_px`
+- `max_bbox_area_ratio`
 - `lost_timeout_s`
 - `fallback_fx_px`
 - `fallback_fy_px`
@@ -152,14 +155,14 @@ GIMBAL_INPUT_TOPIC=/x500_0/yolo/tracks \
 
 含义如下：
 
-- `ENABLE_YOLO_TRACKING`：是否启动 YOLO + ByteTrack 跟踪，默认 `true`。
+- `ENABLE_YOLO_TRACKING`：是否启动 YOLO + BoT-SORT 跟踪，默认 `true`。
 - `ENABLE_GIMBAL_TRACKING`：是否启动视觉闭环云台跟踪，`start_waypoint_tracking.sh` 默认 `true`。
 - `YOLO_TRACKS_TOPIC`：`yolo_tracker` 发布的跟踪结果 topic。
 - `GIMBAL_INPUT_TOPIC`：`gimbal_target_tracker` 订阅的 `Detection2DArray` topic，默认等于 `YOLO_TRACKS_TOPIC`。
 - `GIMBAL_ATTITUDE_TOPIC`：云台真实姿态反馈 topic，默认 `/fmu/out/gimbal_device_attitude_status`。
 - `GIMBAL_SET_ATTITUDE_TOPIC`：云台高频 setpoint topic，默认 `/fmu/in/gimbal_manager_set_attitude`。
 - `CAMERA_INFO_TOPIC`：云台节点订阅的 ROS `sensor_msgs/CameraInfo` topic，默认 `/x500_0/camera/camera_info`。
-- `YOLO_TRACKING_CONFIG_FILE`：可选，自定义 YOLO/ByteTrack 参数文件。
+- `YOLO_TRACKING_CONFIG_FILE`：可选，自定义 YOLO/BoT-SORT 参数文件。
 - `GIMBAL_CONFIG_FILE`：可选，自定义云台控制参数文件。
 
 ## 控制律
@@ -202,7 +205,7 @@ pitch_cmd = clamp(pitch_cmd + pitch_rate * dt, min_pitch, max_pitch)
 
 ## 目标锁定
 
-`lock_target_track` 控制是否锁定同一个 `Detection2D.id`。当前 YAML 配置为 `true`，节点会在通过 `target_class_id`、`min_score` 筛选后锁定一个 `track_id`，降低多目标场景中的切换概率；如果 ByteTrack 临时丢失并重新分配 ID，节点会优先重锁到离上一次目标图像位置最近的候选。如果改为 `false`，则每帧跟踪筛选后的最高置信度目标：
+`lock_target_track` 控制是否锁定同一个 `Detection2D.id`。当前 YAML 配置为 `true`，节点会在通过 `target_class_id`、`min_score` 和 bbox 尺寸阈值筛选后锁定一个 `track_id`，降低多目标场景中的切换概率；如果 BoT-SORT 临时丢失并重新分配 ID，节点会优先重锁到离上一次目标图像位置最近的候选。如果改为 `false`，则每帧跟踪筛选后的最高置信度目标：
 
 ```text
 target_track_id 非空：只跟踪指定 track id
@@ -253,7 +256,7 @@ ros2 topic echo /x500_0/gimbal_target_tracker/tracking_active --once
 1. `/x500_0/yolo/tracks` 是否持续有跟踪框。
 2. `gimbal_tracking.yaml` 中的 `target_class_id` 是否和 YOLO 输出的 `class_id` 完全一致。
 3. `gimbal_tracking.yaml` 中的 `target_track_id` 是否指定了当前不存在的 track id。
-4. `gimbal_tracking.yaml` 中的 `min_score` 是否过高。
+4. `gimbal_tracking.yaml` 中的 `min_score` 是否过高，或 bbox 尺寸过滤是否把真实目标过滤掉。
 5. `/fmu/out/gimbal_device_attitude_status` 是否有云台姿态反馈。
 6. `/fmu/in/gimbal_manager_set_attitude` 是否持续有 `GimbalManagerSetAttitude`。
 7. `GIMBAL_INPUT_TOPIC` 是否与 `YOLO_TRACKS_TOPIC` 一致。
@@ -266,13 +269,13 @@ ros2 topic echo /x500_0/gimbal_target_tracker/tracking_active --once
 2. 再打开 `ENABLE_GIMBAL_TRACKING=true`，观察云台是否能把目标拉回画面中心。
 3. 如果目标向右偏，云台也继续向右导致更偏，反转 `gimbal_tracking.yaml` 中的 `yaw_error_sign`。
 4. 如果目标向上偏，云台也继续向上导致更偏，反转 `pitch_error_sign`。
-5. 如果画面里有两个以上目标且跟踪目标来回切换，优先指定 `target_track_id`，或提高 YOLO/ByteTrack 的跟踪稳定性。
+5. 如果画面里有两个以上目标且跟踪目标来回切换，优先指定 `target_track_id`，或提高 YOLO/BoT-SORT 的跟踪稳定性。
 6. 目标在画面中振荡时，降低 `yaw_rate_gain_s_inv` 和 `pitch_rate_gain_s_inv`。
 7. 目标移动快但云台跟不上时，适当提高增益和最大角速度。
 
 ## 局限性
 
-当前实现是基于图像误差的二维视觉伺服，不估计目标三维位置，也不预测目标运动。ByteTrack 可以提升跨帧目标连续性，但它仍依赖 YOLO 检测结果；当目标长时间遮挡、过小或置信度过低时，track id 可能丢失，并在释放锁定后重新捕获。
+当前实现是基于图像误差的二维视觉伺服，不估计目标三维位置，也不预测目标运动。BoT-SORT 可以提升跨帧目标连续性，但它仍依赖 YOLO 检测结果；当目标长时间遮挡、过小或置信度过低时，track id 可能丢失，并在释放锁定后重新捕获。
 
 如果后续要做更强的导引头/制导仿真，可以进一步增加：
 

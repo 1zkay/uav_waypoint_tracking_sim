@@ -7,14 +7,14 @@ yolo_tracker:
     tracks_topic: /x500_0/yolo/tracks
     annotated_image_topic: /x500_0/yolo/tracks_image
 
-    # Ultralytics tracker backend. Use bytetrack.yaml for ByteTrack or
-    # botsort.yaml for BoT-SORT when available in the ultralytics package.
-    tracker_config: bytetrack.yaml
+    # Ultralytics tracker backend. BoT-SORT handles moving-camera scenes better
+    # than the ByteTrack baseline in this simulation.
+    tracker_config: botsort.yaml
 
     # YOLO inference parameters.
-    confidence_threshold: 0.25
+    confidence_threshold: 0.35
     iou_threshold: 0.45
-    image_size: 640
+    image_size: 960
     max_detections: 100
     classes: ""
     device: ""

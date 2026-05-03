@@ -164,30 +164,5 @@
       <longitude_deg>8.546163739800146</longitude_deg>
       <elevation>0</elevation>
     </spherical_coordinates>
-    <!-- Commented out missing models to avoid loading errors -->
-    <!--
-    <include>
-      <uri>model://sonoma_raceway</uri>
-    </include>
-    <include>
-      <pose>285.24 -146.97 2.57 0.02 0 -0.65</pose>
-      <uri>model://hatchback_blue</uri>
-      <name>hatchback_blue_1</name>
-    </include>
-    <include>
-      <pose>273.43 -137.65 2.86 0.02 0 -0.65</pose>
-      <uri>model://pickup</uri>
-      <name>pickup_1</name>
-    </include>
-    <include>
-      <pose>295.96 -146.5 2.48 -0.019 -0.008 2.46</pose>
-      <uri>model://pickup</uri>
-      <name>pickup_2</name>
-    </include>
-    <include>
-      <pose>280.64 -137.32 2.77 -0.019 -0.008 2.46</pose>
-      <uri>model://casual_female</uri>
-    </include>
-    -->
   </world>
 </sdf>

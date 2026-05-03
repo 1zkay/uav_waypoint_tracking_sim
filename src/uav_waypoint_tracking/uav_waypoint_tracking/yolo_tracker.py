@@ -28,7 +28,7 @@ class YoloTrack:
 class YoloTracker(Node):
     """Run YOLO tracking with a persistent Ultralytics tracker backend.
 
-    The default tracker backend is ByteTrack. Output remains
+    The default tracker backend is BoT-SORT. Output remains
     vision_msgs/Detection2DArray so downstream nodes can consume either
     detector or tracker results with the same message type. For tracked objects,
     Detection2D.id is the persistent track id.
@@ -41,10 +41,10 @@ class YoloTracker(Node):
         self.declare_parameter("image_topic", "/x500_0/camera/image_raw")
         self.declare_parameter("tracks_topic", "/x500_0/yolo/tracks")
         self.declare_parameter("annotated_image_topic", "/x500_0/yolo/tracks_image")
-        self.declare_parameter("tracker_config", "bytetrack.yaml")
-        self.declare_parameter("confidence_threshold", 0.25)
+        self.declare_parameter("tracker_config", "botsort.yaml")
+        self.declare_parameter("confidence_threshold", 0.35)
         self.declare_parameter("iou_threshold", 0.45)
-        self.declare_parameter("image_size", 640)
+        self.declare_parameter("image_size", 960)
         self.declare_parameter("max_detections", 100)
         self.declare_parameter("classes", "")
         self.declare_parameter("device", "")

@@ -10,6 +10,9 @@ gimbal_target_tracker:
     target_track_id: ""
     lock_target_track: true
     min_score: 0.35
+    max_bbox_width_px: 300.0
+    max_bbox_height_px: 220.0
+    max_bbox_area_ratio: 0.08
     lost_timeout_s: 0.8
 
     # Camera-calibrated image-plane visual-servo loop. CameraInfo is preferred;
