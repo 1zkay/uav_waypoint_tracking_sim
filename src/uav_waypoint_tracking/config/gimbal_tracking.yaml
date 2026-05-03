@@ -4,6 +4,7 @@ gimbal_target_tracker:
     # is supplied by launch files. Keep this file focused on reusable tuning.
     error_topic: /x500_0/gimbal_target_tracker/error
     tracking_active_topic: /x500_0/gimbal_target_tracker/tracking_active
+    state_topic: /x500_0/gimbal_target_tracker/state
 
     # Detection selection.
     target_class_id: ""
@@ -22,8 +23,14 @@ gimbal_target_tracker:
     fallback_image_width: 1280.0
     fallback_image_height: 720.0
     deadband_angle_deg: 0.5
-    yaw_rate_gain_s_inv: 0.6
-    pitch_rate_gain_s_inv: 0.4
+    yaw_kp_s_inv: 0.6
+    pitch_kp_s_inv: 0.4
+    yaw_ki_s_inv2: 0.0
+    pitch_ki_s_inv2: 0.0
+    yaw_feedforward_deg_s: 0.0
+    pitch_feedforward_deg_s: 0.0
+    max_yaw_error_integral_deg_s: 90.0
+    max_pitch_error_integral_deg_s: 90.0
     max_yaw_rate_deg_s: 45.0
     max_pitch_rate_deg_s: 30.0
     yaw_error_sign: 1.0
@@ -48,7 +55,8 @@ gimbal_target_tracker:
     # Safety/diagnostic behavior.
     hold_last_command_on_loss: true
     send_command_before_first_detection: false
-    use_gimbal_feedback: false
+    use_gimbal_feedback: true
+    initialize_command_from_feedback: true
     configure_gimbal_manager: true
     configure_retry_period_s: 1.0
     # 0 means retry until PX4 accepts the gimbal manager configure command.

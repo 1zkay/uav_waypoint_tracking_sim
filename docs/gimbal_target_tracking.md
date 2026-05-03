@@ -120,14 +120,21 @@ src/uav_waypoint_tracking/config/gimbal_tracking.yaml
 - `fallback_cx_px`
 - `fallback_cy_px`
 - `deadband_angle_deg`
-- `yaw_rate_gain_s_inv`
-- `pitch_rate_gain_s_inv`
+- `yaw_kp_s_inv`
+- `pitch_kp_s_inv`
+- `yaw_ki_s_inv2`
+- `pitch_ki_s_inv2`
+- `yaw_feedforward_deg_s`
+- `pitch_feedforward_deg_s`
+- `max_yaw_error_integral_deg_s`
+- `max_pitch_error_integral_deg_s`
 - `yaw_error_sign`
 - `pitch_error_sign`
 - `yaw_frame`
 - `command_interface`
 - `hold_last_command_on_loss`
 - `use_gimbal_feedback`
+- `initialize_command_from_feedback`
 - `configure_gimbal_manager`
 - `configure_retry_period_s`
 - `configure_max_attempts`
@@ -178,17 +185,28 @@ pitch_error_deg = degrees(atan2(track_center_y - cy, fy))
 
 如果 `CameraInfo` 暂时未到达，节点使用 YAML 中的显式 fallback 内参；fallback 是启动容错，不是主路径。
 
-然后进行死区处理、限幅和积分：
+然后进行死区处理、PI + feedforward 速度控制、速度限幅，并把速度持续积分成参考角指令：
 
 ```text
-yaw_rate   = yaw_error_sign   * yaw_rate_gain_s_inv   * yaw_error_deg
-pitch_rate = pitch_error_sign * pitch_rate_gain_s_inv * pitch_error_deg
+yaw_control_error   = yaw_error_sign   * yaw_error_deg
+pitch_control_error = pitch_error_sign * pitch_error_deg
 
-yaw_cmd   = clamp(yaw_cmd   + yaw_rate   * dt, min_yaw,   max_yaw)
-pitch_cmd = clamp(pitch_cmd + pitch_rate * dt, min_pitch, max_pitch)
+yaw_error_integral   = clamp(yaw_error_integral   + yaw_control_error   * dt, -max_yaw_error_integral,   max_yaw_error_integral)
+pitch_error_integral = clamp(pitch_error_integral + pitch_control_error * dt, -max_pitch_error_integral, max_pitch_error_integral)
+
+yaw_rate   = yaw_kp_s_inv   * yaw_control_error   + yaw_ki_s_inv2   * yaw_error_integral   + yaw_feedforward_deg_s
+pitch_rate = pitch_kp_s_inv * pitch_control_error + pitch_ki_s_inv2 * pitch_error_integral + pitch_feedforward_deg_s
+
+yaw_rate   = clamp(yaw_rate,   -max_yaw_rate,   max_yaw_rate)
+pitch_rate = clamp(pitch_rate, -max_pitch_rate, max_pitch_rate)
+
+cmd_yaw   = clamp(cmd_yaw   + yaw_rate   * dt, min_yaw,   max_yaw)
+cmd_pitch = clamp(cmd_pitch + pitch_rate * dt, min_pitch, max_pitch)
 ```
 
-最后默认通过 `/fmu/in/gimbal_manager_set_attitude` 发布 `px4_msgs/msg/GimbalManagerSetAttitude`。这对应 MAVLink gimbal manager 的高频 setpoint 路径：MAVLink 标准中 `MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW` 是低频命令，连续流式控制应使用 `GIMBAL_MANAGER_SET_PITCHYAW`；PX4 在 ROS 2 / uORB 侧用 `gimbal_manager_set_attitude` 承载等价的姿态 setpoint。节点会把内部的 `pitch/yaw` 角转换成四元数 `q` 发布，角速度字段设为 `NaN`，表示只给角度目标。
+`cmd_yaw/cmd_pitch` 是节点内部持续积分出来的参考指令，也是唯一用于下发云台 setpoint 的角度状态。`yaw_kp_s_inv/pitch_kp_s_inv` 是主比例增益；`yaw_ki_s_inv2`、`pitch_ki_s_inv2` 和 feedforward 默认都是 0，因此默认行为是 P 控制。
+
+最后默认通过 `/fmu/in/gimbal_manager_set_attitude` 发布 `px4_msgs/msg/GimbalManagerSetAttitude`。这对应 MAVLink gimbal manager 的高频 setpoint 路径：MAVLink 标准中 `MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW` 是低频命令，连续流式控制应使用 `GIMBAL_MANAGER_SET_PITCHYAW`；PX4 在 ROS 2 / uORB 侧用 `gimbal_manager_set_attitude` 承载等价的姿态 setpoint。节点会把内部的 `cmd_pitch/cmd_yaw` 角转换成四元数 `q` 发布，角速度字段设为 `NaN`，表示只给角度目标。
 
 节点仍会通过 `/fmu/in/vehicle_command` 发送 `MAV_CMD_DO_GIMBAL_MANAGER_CONFIGURE`，把当前 `source_system/source_component` 设置为 gimbal manager primary control。节点会订阅 `/fmu/out/vehicle_command_ack`，在收到 accepted ACK 前按 `configure_retry_period_s` 周期重试，避免 PX4/gimbal 尚未准备好时一次性配置丢失。如需回退到旧实现，可将 `command_interface` 改为 `vehicle_command`，此时会连续发送 `MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW`。
 
@@ -196,7 +214,9 @@ pitch_cmd = clamp(pitch_cmd + pitch_rate * dt, min_pitch, max_pitch)
 
 `yaw_frame` 默认是 `vehicle`，节点在 PX4 ROS 2 / uORB 路径上发送 `flags=0`，使 yaw 按机体系解释；如需地理系 yaw，可改为 `earth`，节点会发送 `GIMBAL_MANAGER_FLAGS_YAW_LOCK`。当前 PX4 的 `gimbal_manager_set_attitude` 处理逻辑实际只用 `YAW_LOCK` 区分 yaw body frame 与 earth frame。
 
-节点默认订阅 `/fmu/out/gimbal_device_attitude_status`，并在反馈消息的 yaw frame 与当前 `yaw_frame` 配置一致时，用云台反馈四元数同步内部 `pitch/yaw` 状态；这样控制积分从实际云台角度继续，而不是只依赖上一次发送的命令。当前 Gazebo 云台反馈按 vehicle frame 发布，因此默认 `yaw_frame: vehicle` 与反馈一致。如果需要回退到纯命令积分，可将 `use_gimbal_feedback` 设为 `false`。
+节点默认订阅 `/fmu/out/gimbal_device_attitude_status`，并在反馈消息的 yaw frame 与当前 `yaw_frame` 配置一致时，把反馈四元数解析到 `actual_yaw/actual_pitch`。这两个反馈量不会在控制过程中覆盖 `cmd_yaw/cmd_pitch`，因此云台指令始终由控制器自身连续积分生成。启动阶段如果 `initialize_command_from_feedback=true` 且节点还没有发送过云台命令，第一次有效反馈会用来初始化 `cmd_yaw/cmd_pitch`，避免默认 `initial_*` 与真实云台角不一致造成首次 setpoint 跳变。当前 Gazebo 云台反馈按 vehicle frame 发布，因此默认 `yaw_frame: vehicle` 与反馈一致；如果不需要记录反馈，可将 `use_gimbal_feedback` 设为 `false`。
+
+诊断话题 `/x500_0/gimbal_target_tracker/state` 使用 `diagnostic_msgs/DiagnosticArray` 发布控制状态，包含 `cmd_yaw/cmd_pitch`、`actual_yaw/actual_pitch`、`cmd_actual_*_error`、误差积分、反馈年龄和是否已用反馈初始化命令。
 
 注意：本机 PX4 的 `/home/zk/PX4-Autopilot/src/modules/uxrce_dds_client/dds_topics.yaml` 已加入 `/fmu/in/gimbal_manager_set_attitude`。修改该文件后需要重新启动 `scripts/start_px4_gazebo.sh`，让 PX4 重新构建并生成 XRCE-DDS topic 支持。
 
@@ -239,6 +259,7 @@ ros2 topic echo /fmu/in/gimbal_manager_set_attitude --once
 ros2 topic echo /fmu/out/gimbal_device_attitude_status --once
 ros2 topic echo /x500_0/gimbal_target_tracker/error --once
 ros2 topic echo /x500_0/gimbal_target_tracker/tracking_active --once
+ros2 topic echo /x500_0/gimbal_target_tracker/state --once
 ```
 
 如果 `/x500_0/yolo/tracks` 没有输出，优先检查：
@@ -267,8 +288,9 @@ ros2 topic echo /x500_0/gimbal_target_tracker/tracking_active --once
 3. 如果目标向右偏，云台也继续向右导致更偏，反转 `gimbal_tracking.yaml` 中的 `yaw_error_sign`。
 4. 如果目标向上偏，云台也继续向上导致更偏，反转 `pitch_error_sign`。
 5. 如果画面里有两个以上目标且跟踪目标来回切换，优先指定 `target_track_id`，或提高 YOLO/BoT-SORT 的跟踪稳定性。
-6. 目标在画面中振荡时，降低 `yaw_rate_gain_s_inv` 和 `pitch_rate_gain_s_inv`。
-7. 目标移动快但云台跟不上时，适当提高增益和最大角速度。
+6. 目标在画面中振荡时，降低 `yaw_kp_s_inv` 和 `pitch_kp_s_inv`，并先保持 `yaw_ki_s_inv2/pitch_ki_s_inv2` 为 0。
+7. 目标稳定偏离画面中心时，小幅增加 `yaw_ki_s_inv2` 或 `pitch_ki_s_inv2`，并用 `max_*_error_integral_deg_s` 限制积分累积。
+8. 目标存在已知恒定角速度扰动时，可在 `yaw_feedforward_deg_s` 或 `pitch_feedforward_deg_s` 中加入前馈；如果只是移动快但云台跟不上，优先提高 Kp 和最大角速度。
 
 ## 局限性
 

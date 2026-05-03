@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 import rclpy
+from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from geometry_msgs.msg import Vector3Stamped
 from px4_msgs.msg import (
     GimbalDeviceAttitudeStatus,
@@ -85,6 +86,7 @@ class GimbalTargetTracker(Node):
             "tracking_active_topic",
             "/x500_0/gimbal_target_tracker/tracking_active",
         )
+        self.declare_parameter("state_topic", "/x500_0/gimbal_target_tracker/state")
 
         self.declare_parameter("target_class_id", "")
         self.declare_parameter("target_track_id", "")
@@ -100,8 +102,14 @@ class GimbalTargetTracker(Node):
         self.declare_parameter("fallback_image_height", 720.0)
         self.declare_parameter("deadband_angle_deg", 1.5)
 
-        self.declare_parameter("yaw_rate_gain_s_inv", 0.18)
-        self.declare_parameter("pitch_rate_gain_s_inv", 0.14)
+        self.declare_parameter("yaw_kp_s_inv", 0.18)
+        self.declare_parameter("pitch_kp_s_inv", 0.14)
+        self.declare_parameter("yaw_ki_s_inv2", 0.0)
+        self.declare_parameter("pitch_ki_s_inv2", 0.0)
+        self.declare_parameter("yaw_feedforward_deg_s", 0.0)
+        self.declare_parameter("pitch_feedforward_deg_s", 0.0)
+        self.declare_parameter("max_yaw_error_integral_deg_s", 90.0)
+        self.declare_parameter("max_pitch_error_integral_deg_s", 90.0)
         self.declare_parameter("max_yaw_rate_deg_s", 18.0)
         self.declare_parameter("max_pitch_rate_deg_s", 14.0)
         self.declare_parameter("yaw_error_sign", 1.0)
@@ -128,6 +136,7 @@ class GimbalTargetTracker(Node):
         self.declare_parameter("hold_last_command_on_loss", True)
         self.declare_parameter("send_command_before_first_detection", False)
         self.declare_parameter("use_gimbal_feedback", True)
+        self.declare_parameter("initialize_command_from_feedback", True)
         self.declare_parameter("configure_gimbal_manager", True)
         self.declare_parameter("configure_retry_period_s", 1.0)
         self.declare_parameter("configure_max_attempts", 0)
@@ -150,6 +159,7 @@ class GimbalTargetTracker(Node):
         self.tracking_active_topic = str(
             self.get_parameter("tracking_active_topic").value
         )
+        self.state_topic = str(self.get_parameter("state_topic").value)
 
         self.target_class_id = str(self.get_parameter("target_class_id").value).strip()
         self.target_track_id = str(self.get_parameter("target_track_id").value).strip()
@@ -171,11 +181,23 @@ class GimbalTargetTracker(Node):
             self.get_parameter("deadband_angle_deg").value
         )
 
-        self.yaw_rate_gain_s_inv = float(
-            self.get_parameter("yaw_rate_gain_s_inv").value
+        self.yaw_kp_s_inv = float(self.get_parameter("yaw_kp_s_inv").value)
+        self.pitch_kp_s_inv = float(self.get_parameter("pitch_kp_s_inv").value)
+        self.yaw_ki_s_inv2 = float(self.get_parameter("yaw_ki_s_inv2").value)
+        self.pitch_ki_s_inv2 = float(self.get_parameter("pitch_ki_s_inv2").value)
+        self.yaw_feedforward_deg_s = float(
+            self.get_parameter("yaw_feedforward_deg_s").value
         )
-        self.pitch_rate_gain_s_inv = float(
-            self.get_parameter("pitch_rate_gain_s_inv").value
+        self.pitch_feedforward_deg_s = float(
+            self.get_parameter("pitch_feedforward_deg_s").value
+        )
+        self.max_yaw_error_integral_deg_s = max(
+            0.0,
+            float(self.get_parameter("max_yaw_error_integral_deg_s").value),
+        )
+        self.max_pitch_error_integral_deg_s = max(
+            0.0,
+            float(self.get_parameter("max_pitch_error_integral_deg_s").value),
         )
         self.max_yaw_rate_deg_s = float(
             self.get_parameter("max_yaw_rate_deg_s").value
@@ -186,8 +208,12 @@ class GimbalTargetTracker(Node):
         self.yaw_error_sign = float(self.get_parameter("yaw_error_sign").value)
         self.pitch_error_sign = float(self.get_parameter("pitch_error_sign").value)
 
-        self.yaw_deg = float(self.get_parameter("initial_yaw_deg").value)
-        self.pitch_deg = float(self.get_parameter("initial_pitch_deg").value)
+        self.cmd_yaw_deg = float(self.get_parameter("initial_yaw_deg").value)
+        self.cmd_pitch_deg = float(self.get_parameter("initial_pitch_deg").value)
+        self.actual_yaw_deg: float | None = None
+        self.actual_pitch_deg: float | None = None
+        self.yaw_error_integral_deg_s = 0.0
+        self.pitch_error_integral_deg_s = 0.0
         self.min_yaw_deg = float(self.get_parameter("min_yaw_deg").value)
         self.max_yaw_deg = float(self.get_parameter("max_yaw_deg").value)
         self.min_pitch_deg = float(self.get_parameter("min_pitch_deg").value)
@@ -214,6 +240,9 @@ class GimbalTargetTracker(Node):
         self.use_gimbal_feedback = bool(
             self.get_parameter("use_gimbal_feedback").value
         )
+        self.initialize_command_from_feedback = bool(
+            self.get_parameter("initialize_command_from_feedback").value
+        )
         self.configure_gimbal_manager = bool(
             self.get_parameter("configure_gimbal_manager").value
         )
@@ -231,6 +260,7 @@ class GimbalTargetTracker(Node):
         self.last_update_time_s: float | None = None
         self.last_gimbal_feedback_time_s: float | None = None
         self.has_sent_gimbal_command = False
+        self.command_initialized_from_feedback = False
         self.has_sent_gimbal_configure = False
         self.gimbal_configure_accepted = False
         self.gimbal_configure_attempts = 0
@@ -264,6 +294,7 @@ class GimbalTargetTracker(Node):
             self.tracking_active_topic,
             10,
         )
+        self.state_pub = self.create_publisher(DiagnosticArray, self.state_topic, 10)
 
         self.create_subscription(
             Detection2DArray,
@@ -303,7 +334,7 @@ class GimbalTargetTracker(Node):
             f"command={self.vehicle_command_topic}, ack={self.vehicle_command_ack_topic}, "
             f"set_attitude={self.gimbal_set_attitude_topic}, class={target_filter}, "
             f"track={track_filter}, yaw_frame={self.yaw_frame}, "
-            f"rate={self.control_rate_hz:.1f} Hz"
+            f"state={self.state_topic}, rate={self.control_rate_hz:.1f} Hz"
         )
 
     def _camera_info_callback(self, msg: CameraInfo) -> None:
@@ -342,10 +373,31 @@ class GimbalTargetTracker(Node):
             return
 
         _, pitch_deg, yaw_deg = quaternion_to_euler_deg(msg.q)
-        self.pitch_deg = clamp(pitch_deg, self.min_pitch_deg, self.max_pitch_deg)
-        self.yaw_deg = clamp(yaw_deg, self.min_yaw_deg, self.max_yaw_deg)
+        self.actual_pitch_deg = clamp(
+            pitch_deg,
+            self.min_pitch_deg,
+            self.max_pitch_deg,
+        )
+        self.actual_yaw_deg = clamp(yaw_deg, self.min_yaw_deg, self.max_yaw_deg)
         self.last_gimbal_feedback_time_s = self._now_s()
+        self._initialize_command_from_feedback_if_needed()
         self.warned_feedback_frame_mismatch = False
+
+    def _initialize_command_from_feedback_if_needed(self) -> None:
+        if not self.initialize_command_from_feedback:
+            return
+        if self.command_initialized_from_feedback or self.has_sent_gimbal_command:
+            return
+        if self.actual_yaw_deg is None or self.actual_pitch_deg is None:
+            return
+
+        self.cmd_yaw_deg = self.actual_yaw_deg
+        self.cmd_pitch_deg = self.actual_pitch_deg
+        self.command_initialized_from_feedback = True
+        self.get_logger().info(
+            "Initialized gimbal command from feedback: "
+            f"yaw={self.cmd_yaw_deg:.2f} deg, pitch={self.cmd_pitch_deg:.2f} deg"
+        )
 
     def _vehicle_command_ack_callback(self, msg: VehicleCommandAck) -> None:
         if msg.command != self._gimbal_configure_command_id():
@@ -509,24 +561,24 @@ class GimbalTargetTracker(Node):
         yaw_error_deg = self._apply_angle_deadband(yaw_error_deg)
         pitch_error_deg = self._apply_angle_deadband(pitch_error_deg)
 
-        yaw_rate_deg_s = clamp(
-            self.yaw_error_sign * self.yaw_rate_gain_s_inv * yaw_error_deg,
-            -self.max_yaw_rate_deg_s,
-            self.max_yaw_rate_deg_s,
-        )
-        pitch_rate_deg_s = clamp(
-            self.pitch_error_sign * self.pitch_rate_gain_s_inv * pitch_error_deg,
-            -self.max_pitch_rate_deg_s,
-            self.max_pitch_rate_deg_s,
+        yaw_control_error_deg = self.yaw_error_sign * yaw_error_deg
+        pitch_control_error_deg = self.pitch_error_sign * pitch_error_deg
+        self._update_error_integrals(
+            yaw_control_error_deg,
+            pitch_control_error_deg,
+            dt_s,
         )
 
-        self.yaw_deg = clamp(
-            self.yaw_deg + yaw_rate_deg_s * dt_s,
+        yaw_rate_deg_s = self._yaw_control_rate_deg_s(yaw_control_error_deg)
+        pitch_rate_deg_s = self._pitch_control_rate_deg_s(pitch_control_error_deg)
+
+        self.cmd_yaw_deg = clamp(
+            self.cmd_yaw_deg + yaw_rate_deg_s * dt_s,
             self.min_yaw_deg,
             self.max_yaw_deg,
         )
-        self.pitch_deg = clamp(
-            self.pitch_deg + pitch_rate_deg_s * dt_s,
+        self.cmd_pitch_deg = clamp(
+            self.cmd_pitch_deg + pitch_rate_deg_s * dt_s,
             self.min_pitch_deg,
             self.max_pitch_deg,
         )
@@ -539,21 +591,106 @@ class GimbalTargetTracker(Node):
             pitch_error_deg,
             self.last_detection.score,
         )
-        self._publish_gimbal_setpoint(now_us, self.pitch_deg, self.yaw_deg)
+        self._publish_gimbal_setpoint(
+            now_us,
+            self.cmd_pitch_deg,
+            self.cmd_yaw_deg,
+        )
+        self._publish_gimbal_state(now_us, active)
 
     def _handle_missing_target(self) -> None:
         now_us = self._now_us()
         self._publish_gimbal_configure_if_needed(now_us)
+        self._reset_error_integrals()
 
         if self.has_sent_gimbal_command and self.hold_last_command_on_loss:
-            self._publish_gimbal_setpoint(now_us, self.pitch_deg, self.yaw_deg)
-            return
-
-        if (
+            self._publish_gimbal_setpoint(
+                now_us,
+                self.cmd_pitch_deg,
+                self.cmd_yaw_deg,
+            )
+        elif (
             not self.has_sent_gimbal_command
             and self.send_command_before_first_detection
         ):
-            self._publish_gimbal_setpoint(now_us, self.pitch_deg, self.yaw_deg)
+            self._publish_gimbal_setpoint(
+                now_us,
+                self.cmd_pitch_deg,
+                self.cmd_yaw_deg,
+            )
+
+        self._publish_gimbal_state(now_us, False)
+
+    def _update_error_integrals(
+        self,
+        yaw_control_error_deg: float,
+        pitch_control_error_deg: float,
+        dt_s: float,
+    ) -> None:
+        self.yaw_error_integral_deg_s = self._next_error_integral(
+            self.yaw_error_integral_deg_s,
+            yaw_control_error_deg,
+            dt_s,
+            self.max_yaw_error_integral_deg_s,
+            self.cmd_yaw_deg,
+            self.min_yaw_deg,
+            self.max_yaw_deg,
+        )
+        self.pitch_error_integral_deg_s = self._next_error_integral(
+            self.pitch_error_integral_deg_s,
+            pitch_control_error_deg,
+            dt_s,
+            self.max_pitch_error_integral_deg_s,
+            self.cmd_pitch_deg,
+            self.min_pitch_deg,
+            self.max_pitch_deg,
+        )
+
+    def _next_error_integral(
+        self,
+        current_integral_deg_s: float,
+        error_deg: float,
+        dt_s: float,
+        max_abs_integral_deg_s: float,
+        cmd_deg: float,
+        min_cmd_deg: float,
+        max_cmd_deg: float,
+    ) -> float:
+        if (cmd_deg <= min_cmd_deg and error_deg < 0.0) or (
+            cmd_deg >= max_cmd_deg and error_deg > 0.0
+        ):
+            return current_integral_deg_s
+
+        next_integral_deg_s = current_integral_deg_s + error_deg * dt_s
+        if max_abs_integral_deg_s <= 0.0:
+            return next_integral_deg_s
+        return clamp(
+            next_integral_deg_s,
+            -max_abs_integral_deg_s,
+            max_abs_integral_deg_s,
+        )
+
+    def _reset_error_integrals(self) -> None:
+        self.yaw_error_integral_deg_s = 0.0
+        self.pitch_error_integral_deg_s = 0.0
+
+    def _yaw_control_rate_deg_s(self, yaw_control_error_deg: float) -> float:
+        return clamp(
+            self.yaw_kp_s_inv * yaw_control_error_deg
+            + self.yaw_ki_s_inv2 * self.yaw_error_integral_deg_s
+            + self.yaw_feedforward_deg_s,
+            -self.max_yaw_rate_deg_s,
+            self.max_yaw_rate_deg_s,
+        )
+
+    def _pitch_control_rate_deg_s(self, pitch_control_error_deg: float) -> float:
+        return clamp(
+            self.pitch_kp_s_inv * pitch_control_error_deg
+            + self.pitch_ki_s_inv2 * self.pitch_error_integral_deg_s
+            + self.pitch_feedforward_deg_s,
+            -self.max_pitch_rate_deg_s,
+            self.max_pitch_rate_deg_s,
+        )
 
     def _time_delta_s(self, now_s: float) -> float:
         if self.last_update_time_s is None:
@@ -619,6 +756,87 @@ class GimbalTargetTracker(Node):
         msg = Bool()
         msg.data = active
         self.tracking_active_pub.publish(msg)
+
+    def _publish_gimbal_state(self, now_us: int, active: bool) -> None:
+        now_s = now_us * 1e-6
+        feedback_age_s = (
+            None
+            if self.last_gimbal_feedback_time_s is None
+            else max(0.0, now_s - self.last_gimbal_feedback_time_s)
+        )
+        cmd_actual_yaw_error_deg = (
+            None
+            if self.actual_yaw_deg is None
+            else self.cmd_yaw_deg - self.actual_yaw_deg
+        )
+        cmd_actual_pitch_error_deg = (
+            None
+            if self.actual_pitch_deg is None
+            else self.cmd_pitch_deg - self.actual_pitch_deg
+        )
+
+        msg = DiagnosticArray()
+        msg.header.stamp.sec = int(now_us // 1_000_000)
+        msg.header.stamp.nanosec = int((now_us % 1_000_000) * 1000)
+
+        status = DiagnosticStatus()
+        status.name = "gimbal_target_tracker"
+        status.hardware_id = f"gimbal_device_id={int(self.gimbal_device_id)}"
+        if not self.use_gimbal_feedback:
+            status.level = DiagnosticStatus.OK
+            status.message = "gimbal feedback disabled"
+        elif feedback_age_s is None:
+            status.level = DiagnosticStatus.WARN
+            status.message = "waiting for gimbal feedback"
+        elif feedback_age_s > 1.0:
+            status.level = DiagnosticStatus.WARN
+            status.message = "gimbal feedback stale"
+        else:
+            status.level = DiagnosticStatus.OK
+            status.message = "gimbal feedback active"
+
+        status.values = [
+            self._diagnostic_value("tracking_active", active),
+            self._diagnostic_value("cmd_yaw_deg", self.cmd_yaw_deg),
+            self._diagnostic_value("cmd_pitch_deg", self.cmd_pitch_deg),
+            self._diagnostic_value("actual_yaw_deg", self.actual_yaw_deg),
+            self._diagnostic_value("actual_pitch_deg", self.actual_pitch_deg),
+            self._diagnostic_value(
+                "cmd_actual_yaw_error_deg",
+                cmd_actual_yaw_error_deg,
+            ),
+            self._diagnostic_value(
+                "cmd_actual_pitch_error_deg",
+                cmd_actual_pitch_error_deg,
+            ),
+            self._diagnostic_value(
+                "yaw_error_integral_deg_s",
+                self.yaw_error_integral_deg_s,
+            ),
+            self._diagnostic_value(
+                "pitch_error_integral_deg_s",
+                self.pitch_error_integral_deg_s,
+            ),
+            self._diagnostic_value("feedback_age_s", feedback_age_s),
+            self._diagnostic_value(
+                "command_initialized_from_feedback",
+                self.command_initialized_from_feedback,
+            ),
+        ]
+        msg.status.append(status)
+        self.state_pub.publish(msg)
+
+    @staticmethod
+    def _diagnostic_value(key: str, value: bool | float | None) -> KeyValue:
+        item = KeyValue()
+        item.key = key
+        if isinstance(value, bool):
+            item.value = str(value).lower()
+        elif value is None:
+            item.value = "nan"
+        else:
+            item.value = f"{value:.6f}"
+        return item
 
     def _publish_gimbal_configure_if_needed(self, now_us: int) -> None:
         if not self.configure_gimbal_manager or self.gimbal_configure_accepted:
