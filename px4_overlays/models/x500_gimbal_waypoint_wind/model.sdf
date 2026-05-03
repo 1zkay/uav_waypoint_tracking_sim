@@ -2,7 +2,7 @@
 <sdf version='1.9'>
   <model name='x500_gimbal_waypoint_wind'>
     <include merge='true'>
-      <uri>model://x500_gimbal</uri>
+      <uri>model://x500_gimbal_self_filtered</uri>
     </include>
     <enable_wind>true</enable_wind>
     <plugin

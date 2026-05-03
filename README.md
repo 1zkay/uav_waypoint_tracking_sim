@@ -100,10 +100,11 @@ WAYPOINTS_FILE=/home/zk/my_target_waypoints.yaml ./scripts/start_target_waypoint
 
 Gazebo 如果暂停，点击左下角播放按钮。航点仿真默认使用
 `waypoint_tracking` 世界，预加载主机 `x500_0` 和目标机 `x500_1`。`x500_0` 使用本仓库的
-`x500_gimbal_waypoint_wind` 包装模型，内部复用 PX4 官方 `x500_gimbal`；`x500_1` 仍使用普通
+`x500_gimbal_waypoint_wind` 包装模型，内部使用带自机相机消隐的 `x500_gimbal_self_filtered`；
+`x500_1` 仍使用普通
 `x500_waypoint_wind`。两个机体都由 world 预加载，PX4 启动后分别通过
 `PX4_GZ_MODEL_NAME=x500_0` 和 `PX4_GZ_MODEL_NAME=x500_1` 连接，因此可以只在本仓库内启用
-受风模型和真值 odometry，不修改 PX4 原始 `x500_base` / `x500_gimbal`。
+受风模型、真值 odometry 和云台相机自机消隐，不修改 PX4 原始 `x500_base` / `x500_gimbal`。
 `default1` 保留给 `/home/zk/gimbal_track` 使用，其中仍包含 `x500_target_moving`。
 Gazebo 世界默认不插入航点柱、边界、参照方块或风向箭头，以减少视觉识别干扰；RViz 使用 ROS ENU
 `map` 坐标显示航点，其中 PX4 NED 会自动转换为 `x=east, y=north, z=up`。如果需要临时查看 Gazebo 静态航点标记，可用 `SHOW_WAYPOINT_VISUALS=true ./scripts/start_px4_gazebo.sh` 启动。
@@ -181,7 +182,7 @@ source install/setup.bash
 视觉链路常用配置文件：
 
 - `src/uav_waypoint_tracking/config/yolo_tracking.yaml`: YOLO/BoT-SORT 参数，例如 `tracker_config`、`confidence_threshold`、`iou_threshold`、`image_size`、`classes`、`device`。
-- `src/uav_waypoint_tracking/config/gimbal_tracking.yaml`: 云台视觉伺服参数，例如 `target_class_id`、`target_track_id`、`lock_target_track`、`min_score`、`max_bbox_width_px`、`max_bbox_height_px`、`max_bbox_area_ratio`、`fallback_fx_px`、`fallback_fy_px`、`deadband_angle_deg`、`yaw_rate_gain_s_inv`、`pitch_rate_gain_s_inv`、`yaw_frame`、`command_interface`、`use_gimbal_feedback`。
+- `src/uav_waypoint_tracking/config/gimbal_tracking.yaml`: 云台视觉伺服参数，例如 `target_class_id`、`target_track_id`、`lock_target_track`、`min_score`、`fallback_fx_px`、`fallback_fy_px`、`deadband_angle_deg`、`yaw_rate_gain_s_inv`、`pitch_rate_gain_s_inv`、`yaw_frame`、`command_interface`、`use_gimbal_feedback`。
 
 ## 风场
 

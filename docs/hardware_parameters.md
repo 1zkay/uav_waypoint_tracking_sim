@@ -17,10 +17,10 @@
 
 ```text
 x500_gimbal_waypoint_wind
-  -> x500_gimbal
-       -> x500
-            -> x500_base
-       -> gimbal
+  -> x500_gimbal_self_filtered
+       -> x500_self_hidden
+            -> x500_base_self_hidden
+       -> gimbal_self_hidden
 ```
 
 目标机模型解析链路：
@@ -41,7 +41,8 @@ x500_waypoint_wind
 
 ## 无人机机体参数
 
-以下参数来自 PX4 官方 Gazebo 模型 `x500_base` 和 `x500`。
+以下参数来自 PX4 官方 Gazebo 模型 `x500_base` 和 `x500`。主机自机消隐模型只给 visual 增加
+`visibility_flags=1`，不改变质量、惯量、碰撞体、传感器或电机插件；目标机仍直接使用官方模型。
 
 ### 机架与机身
 
@@ -135,11 +136,11 @@ world 中同时加载了这些传感器需要的 Gazebo 系统插件：`Imu`、`
 
 ## 云台安装参数
 
-主机 `x500_0` 使用 PX4 官方 `x500_gimbal` 模型。云台安装参数：
+主机 `x500_0` 使用本仓库的 `x500_gimbal_self_filtered` 模型。云台安装参数：
 
 | 参数（中文说明）                   | 当前值                |
 | --------------------------------- | --------------------- |
-| 云台模型 URI                      | `model://gimbal`    |
+| 云台模型 URI                      | `model://gimbal_self_hidden` |
 | 云台相对 `x500` 的 include 位姿 | `0 0 0.26 0 0 3.14` |
 | 固定连接关节                      | `GimbalAttachJoint` |
 | 关节类型                          | `fixed`             |
@@ -149,6 +150,9 @@ world 中同时加载了这些传感器需要的 Gazebo 系统插件：`Imu`、`
 ## 云台物理参数
 
 云台模型为非静态模型，`self_collide=false`。
+主机云台相机设置 `visibility_mask=2`；主机机架和云台自身 visual 设置 `visibility_flags=1`，
+因此自机不会被该云台相机渲染，但默认 Gazebo GUI 相机仍可见。目标机 visual 保持默认 flags，
+所以仍会出现在主机云台相机图像中。
 
 以下四个云台 link 的质量均为 `0.1 kg`，惯量均为 `ixx=iyy=izz=0.001 kg*m^2`：
 
@@ -267,10 +271,13 @@ PX4 Gazebo bridge 最终向这些 Gazebo topic 发布关节位置指令：
 | world 中加载哪两个模型、模型名、初始位姿                 | `px4_overlays/worlds/waypoint_tracking.sdf`                                                    |
 | 运行时自动生成的 world                                   | `build/generated/worlds/waypoint_tracking.sdf`                                                 |
 | PX4 实际运行时使用的 world 副本                          | `/home/zk/PX4-Autopilot/Tools/simulation/gz/worlds/waypoint_tracking.sdf`                      |
-| 无人机机身质量、惯量、碰撞体、基础传感器、旋翼 link 位姿 | `/home/zk/PX4-Autopilot/Tools/simulation/gz/models/x500_base/model.sdf`                        |
-| 无人机电机模型常数、电机方向、旋翼动力插件               | `/home/zk/PX4-Autopilot/Tools/simulation/gz/models/x500/model.sdf`                             |
-| 云台相对无人机的安装位姿、固定连接关节                   | `/home/zk/PX4-Autopilot/Tools/simulation/gz/models/x500_gimbal/model.sdf`                      |
-| 云台质量、惯量、关节限位、相机、相机 IMU、云台 PID       | `/home/zk/PX4-Autopilot/Tools/simulation/gz/models/gimbal/model.sdf`                           |
+| 主机自机消隐机身 visual flags                            | `px4_overlays/models/x500_base_self_hidden/model.sdf`                                         |
+| 主机自机消隐电机模型与旋翼插件                           | `px4_overlays/models/x500_self_hidden/model.sdf`                                              |
+| 主机自机消隐云台安装位姿、固定连接关节                   | `px4_overlays/models/x500_gimbal_self_filtered/model.sdf`                                     |
+| 主机自机消隐云台 visual flags、相机 visibility mask       | `px4_overlays/models/gimbal_self_hidden/model.sdf`                                            |
+| 目标机官方机身质量、惯量、碰撞体、基础传感器、旋翼 link 位姿 | `/home/zk/PX4-Autopilot/Tools/simulation/gz/models/x500_base/model.sdf`                        |
+| 目标机官方电机模型常数、电机方向、旋翼动力插件           | `/home/zk/PX4-Autopilot/Tools/simulation/gz/models/x500/model.sdf`                             |
+| PX4 官方云台源模型参考                                   | `/home/zk/PX4-Autopilot/Tools/simulation/gz/models/gimbal/model.sdf`                           |
 | PX4 airframe 云台 mount 默认参数                         | `/home/zk/PX4-Autopilot/ROMFS/px4fmu_common/init.d-posix/airframes/4019_gz_x500_gimbal`        |
 | PX4 构建后的 airframe 副本                               | `/home/zk/PX4-Autopilot/build/px4_sitl_default/etc/init.d-posix/airframes/4019_gz_x500_gimbal` |
 | ROS 云台视觉伺服调参，不是硬件参数                       | `src/uav_waypoint_tracking/config/gimbal_tracking.yaml`                                        |

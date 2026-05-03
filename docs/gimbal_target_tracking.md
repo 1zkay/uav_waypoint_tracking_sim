@@ -114,9 +114,6 @@ src/uav_waypoint_tracking/config/gimbal_tracking.yaml
 - `target_track_id`
 - `lock_target_track`
 - `min_score`
-- `max_bbox_width_px`
-- `max_bbox_height_px`
-- `max_bbox_area_ratio`
 - `lost_timeout_s`
 - `fallback_fx_px`
 - `fallback_fy_px`

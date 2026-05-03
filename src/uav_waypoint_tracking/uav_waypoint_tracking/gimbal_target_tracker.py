@@ -36,8 +36,6 @@ class SelectedDetection:
     score: float
     center_x: float
     center_y: float
-    width: float
-    height: float
 
 
 @dataclass
@@ -92,9 +90,6 @@ class GimbalTargetTracker(Node):
         self.declare_parameter("target_track_id", "")
         self.declare_parameter("lock_target_track", True)
         self.declare_parameter("min_score", 0.35)
-        self.declare_parameter("max_bbox_width_px", 0.0)
-        self.declare_parameter("max_bbox_height_px", 0.0)
-        self.declare_parameter("max_bbox_area_ratio", 0.0)
         self.declare_parameter("control_rate_hz", 20.0)
         self.declare_parameter("lost_timeout_s", 0.8)
         self.declare_parameter("fallback_fx_px", 410.93927419797166)
@@ -160,15 +155,6 @@ class GimbalTargetTracker(Node):
         self.target_track_id = str(self.get_parameter("target_track_id").value).strip()
         self.lock_target_track = bool(self.get_parameter("lock_target_track").value)
         self.min_score = float(self.get_parameter("min_score").value)
-        self.max_bbox_width_px = float(
-            self.get_parameter("max_bbox_width_px").value
-        )
-        self.max_bbox_height_px = float(
-            self.get_parameter("max_bbox_height_px").value
-        )
-        self.max_bbox_area_ratio = float(
-            self.get_parameter("max_bbox_area_ratio").value
-        )
         self.control_rate_hz = float(self.get_parameter("control_rate_hz").value)
         self.lost_timeout_s = float(self.get_parameter("lost_timeout_s").value)
         self.fallback_fx_px = float(self.get_parameter("fallback_fx_px").value)
@@ -413,8 +399,6 @@ class GimbalTargetTracker(Node):
                 continue
             if self.target_class_id and class_id != self.target_class_id:
                 continue
-            if not self._bbox_size_allowed(detection):
-                continue
 
             candidates.append(
                 SelectedDetection(
@@ -423,8 +407,6 @@ class GimbalTargetTracker(Node):
                     score=score,
                     center_x=float(detection.bbox.center.position.x),
                     center_y=float(detection.bbox.center.position.y),
-                    width=float(detection.bbox.size_x),
-                    height=float(detection.bbox.size_y),
                 )
             )
 
@@ -448,25 +430,6 @@ class GimbalTargetTracker(Node):
             )
 
         return max(candidates, key=lambda candidate: candidate.score)
-
-    def _bbox_size_allowed(self, detection: Detection2D) -> bool:
-        width = float(detection.bbox.size_x)
-        height = float(detection.bbox.size_y)
-        if width <= 0.0 or height <= 0.0:
-            return False
-
-        if self.max_bbox_width_px > 0.0 and width > self.max_bbox_width_px:
-            return False
-        if self.max_bbox_height_px > 0.0 and height > self.max_bbox_height_px:
-            return False
-
-        if self.max_bbox_area_ratio > 0.0:
-            intrinsics = self.camera_intrinsics
-            image_area = max(intrinsics.width, 1.0) * max(intrinsics.height, 1.0)
-            if width * height > self.max_bbox_area_ratio * image_area:
-                return False
-
-        return True
 
     def _release_auto_track_lock_if_lost(self, active: bool) -> None:
         if active or self.target_track_id or not self.locked_track_id:
