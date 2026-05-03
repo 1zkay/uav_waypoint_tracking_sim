@@ -45,6 +45,7 @@ class WaypointTracker(Node):
         self.control_rate_hz = float(config.get("control_rate_hz", 10.0))
         self.takeoff_warmup_s = float(config.get("takeoff_warmup_s", 1.5))
         self.land_at_end = bool(config.get("land_at_end", True))
+        self.loop_route = bool(config.get("loop_route", True))
         self.yaw_mode = str(config.get("yaw_mode", "face_next_waypoint"))
 
         self.current_waypoint_index = 0
@@ -259,6 +260,12 @@ class WaypointTracker(Node):
             )
 
     def _finish_route(self, now_us: int) -> None:
+        if self.loop_route and not self.land_at_end:
+            self.current_waypoint_index = 0
+            self.reached_since_us = None
+            self.get_logger().info("Route complete; restarting waypoint loop.")
+            return
+
         if self.land_at_end:
             self.get_logger().info("Route complete; sending land command.")
             self._land(now_us)
@@ -312,6 +319,9 @@ class WaypointTracker(Node):
         if target_index + 1 < len(self.waypoints):
             start = self.waypoints[target_index]
             end = self.waypoints[target_index + 1]
+        elif self.loop_route and len(self.waypoints) > 1:
+            start = self.waypoints[target_index]
+            end = self.waypoints[0]
         elif self.vehicle_local_position is not None:
             start = (
                 self.vehicle_local_position.x,

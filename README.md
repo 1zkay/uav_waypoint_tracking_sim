@@ -88,7 +88,7 @@ cd /home/zk/uav_waypoint_tracking_sim
 `scripts/start_px4_gazebo.sh` 会在启动前自动根据主机 YAML
 生成 Gazebo world，并同步到 PX4 的 worlds 目录；`scripts/start_waypoint_tracking.sh`
 也会默认把同一个主机 YAML 传给控制节点和 RViz 可视化节点。目标机启动脚本默认使用
-`target_waypoints.yaml`，当前轨迹是在 `x-z` 垂直平面内的椭圆。
+`target_waypoints.yaml`，当前轨迹是在主机悬停后云台视场内循环的小椭圆。
 
 使用自定义航点文件时，PX4/Gazebo 终端和 ROS 终端都传入同一个变量：
 
