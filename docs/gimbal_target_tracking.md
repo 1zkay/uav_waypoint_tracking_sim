@@ -139,7 +139,8 @@ src/uav_waypoint_tracking/config/gimbal_tracking.yaml
 - `search_pitch_rate_deg_s`
 - `search_initial_yaw_amplitude_deg`
 - `search_max_yaw_amplitude_deg`
-- `search_pitch_bands_deg`
+- `local_search_pitch_bands_deg`
+- `global_search_pitch_levels_deg`
 - `max_search_cmd_actual_error_deg`
 - `yaw_frame`
 - `command_interface`
@@ -243,9 +244,9 @@ global_search:       局部扫描超过 local_search_duration_s 后，在完整 
 
 如果是 `camera_fault` 或 `vision_stream_lost`，节点不会主动搜索，因为这通常表示相机桥接、YOLO 节点或上游图像链路异常，而不是目标飞出视场。此时节点只保持最后 setpoint 并在 `/x500_0/gimbal_target_tracker/state` 中报警。
 
-如果图像和检测流都正常但没有目标，节点先短时保持最后 `cmd_yaw/cmd_pitch`。超过 `search_after_lost_s` 后进入搜索：`local_search` 以当前新鲜 `actual_yaw/actual_pitch` 为中心，没有新鲜反馈时以 `cmd_yaw/cmd_pitch` 为中心；yaw 按 `search_yaw_rate_deg_s` 左右扫描，扫描幅度从 `search_initial_yaw_amplitude_deg` 逐步扩大到 `search_max_yaw_amplitude_deg`，pitch 按 `search_pitch_bands_deg` 分层切换。局部搜索超时后进入 `global_search`，在 `min_yaw_deg/max_yaw_deg` 范围内继续按 pitch bands 蛇形扫描。一旦重新收到符合筛选条件的目标，节点重置搜索状态并回到视觉伺服闭环。
+如果图像和检测流都正常但没有目标，节点先短时保持最后 `cmd_yaw/cmd_pitch`。超过 `search_after_lost_s` 后进入搜索：`local_search` 以当前新鲜 `actual_yaw/actual_pitch` 为中心，没有新鲜反馈时以 `cmd_yaw/cmd_pitch` 为中心；yaw 按 `search_yaw_rate_deg_s` 左右扫描，扫描幅度从 `search_initial_yaw_amplitude_deg` 逐步扩大到 `search_max_yaw_amplitude_deg`，pitch 按 `local_search_pitch_bands_deg` 做相对丢失角的分层切换。局部搜索超时后进入 `global_search`，在 `min_yaw_deg/max_yaw_deg` 范围内继续蛇形扫描，但 pitch 改用 `global_search_pitch_levels_deg` 中的绝对俯仰层，默认从水平 `0 deg` 开始。这样全局搜索不会因为丢失时云台已经指向错误 pitch 而一直围绕错误角度扫描。一旦重新收到符合筛选条件的目标，节点重置搜索状态并回到视觉伺服闭环。
 
-搜索时 `actual_yaw/actual_pitch` 仍不覆盖运行中的 `cmd_yaw/cmd_pitch`。它们用于选择搜索中心和监控云台是否跟得上搜索命令；如果 `cmd-actual` 超过 `max_search_cmd_actual_error_deg`，搜索会暂停推进，等待云台跟上，避免外环把 setpoint 推得过远。
+搜索时 `actual_yaw/actual_pitch` 仍不覆盖运行中的 `cmd_yaw/cmd_pitch`。它们用于选择搜索中心和监控云台是否跟得上搜索命令。`max_search_cmd_actual_error_deg` 大于 0 时，如果 `cmd-actual` 超过该阈值，搜索会暂停推进并等待云台跟上；默认值为 0，表示不因 `cmd-actual` 偏差暂停搜索，因为 PX4/Gazebo 反馈可能存在固定角度偏移。
 
 注意：本机 PX4 的 `/home/zk/PX4-Autopilot/src/modules/uxrce_dds_client/dds_topics.yaml` 已加入 `/fmu/in/gimbal_manager_set_attitude`。修改该文件后需要重新启动 `scripts/start_px4_gazebo.sh`，让 PX4 重新构建并生成 XRCE-DDS topic 支持。
 

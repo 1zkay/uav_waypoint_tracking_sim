@@ -1,9 +1,9 @@
 # Target UAV trajectory in its PX4 local NED frame.
 # x forward/north, y right/east, z down; negative z means altitude above home.
 # x500_1 is spawned at Gazebo north=5 m while x500_0 holds NED [1, 2, -5].
-# This loop keeps the target near x500_0's post-hover gimbal FOV center:
-# roughly 7-9 m in front, within +/-2 m lateral offset, and within +/-0.5 m
-# vertical offset relative to the host.
+# This loop intentionally drives the target outside x500_0's gimbal FOV:
+# roughly 6.7-10.7 m in front, about +/-9.3 m lateral offset, and about
+# +/-1.7 m vertical offset relative to the host.
 frame: NED
 acceptance_radius_m: 0.4
 dwell_time_s: 0.3
@@ -14,12 +14,14 @@ loop_route: true
 yaw_mode: face_next_waypoint
 waypoints:
   - [4.0, 2.0, -5.0]
-  - [4.0, 0.0, -5.0]
-  - [4.7, 0.6, -5.4]
-  - [5.0, 2.0, -5.5]
-  - [4.7, 3.4, -5.4]
-  - [4.0, 4.0, -5.0]
-  - [3.3, 3.4, -4.6]
-  - [3.0, 2.0, -4.5]
-  - [3.3, 0.6, -4.6]
-  - [4.0, 0.0, -5.0]
+  - [4.0, -6.0, -5.0]
+  - [5.0, -7.3, -6.0]
+  - [6.3, -3.3, -6.7]
+  - [6.7, 2.0, -6.2]
+  - [6.3, 7.3, -6.7]
+  - [5.0, 11.3, -6.0]
+  - [4.0, 10.0, -5.0]
+  - [3.0, 7.3, -4.0]
+  - [2.7, 2.0, -3.3]
+  - [3.0, -3.3, -4.0]
+  - [4.0, -6.0, -5.0]

@@ -37,7 +37,7 @@ gimbal_target_tracker:
     max_yaw_rate_deg_s: 45.0
     max_pitch_rate_deg_s: 30.0
     yaw_error_sign: 1.0
-    pitch_error_sign: 1.0
+    pitch_error_sign: -1.0
 
     # Command limits.
     initial_yaw_deg: 0.0
@@ -65,8 +65,13 @@ gimbal_target_tracker:
     search_pitch_rate_deg_s: 8.0
     search_initial_yaw_amplitude_deg: 10.0
     search_max_yaw_amplitude_deg: 90.0
-    search_pitch_bands_deg: [0.0, -8.0, 8.0, -16.0, 16.0]
-    max_search_cmd_actual_error_deg: 20.0
+    # Local search uses pitch offsets around the angle where the target was lost.
+    local_search_pitch_bands_deg: [0.0, -8.0, 8.0, -16.0, 16.0]
+    # Global search uses absolute pitch levels, starting near the horizon.
+    global_search_pitch_levels_deg: [0.0, -20.0, 20.0, -40.0, 30.0, -60.0, -80.0]
+    # 0 disables search pausing based on cmd-actual lag. Keep disabled by
+    # default because PX4/Gazebo feedback can include small frame offsets.
+    max_search_cmd_actual_error_deg: 0.0
     use_gimbal_feedback: true
     initialize_command_from_feedback: true
     configure_gimbal_manager: true

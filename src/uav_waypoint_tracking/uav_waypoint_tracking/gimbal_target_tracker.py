@@ -146,10 +146,14 @@ class GimbalTargetTracker(Node):
         self.declare_parameter("search_initial_yaw_amplitude_deg", 10.0)
         self.declare_parameter("search_max_yaw_amplitude_deg", 90.0)
         self.declare_parameter(
-            "search_pitch_bands_deg",
+            "local_search_pitch_bands_deg",
             [0.0, -8.0, 8.0, -16.0, 16.0],
         )
-        self.declare_parameter("max_search_cmd_actual_error_deg", 20.0)
+        self.declare_parameter(
+            "global_search_pitch_levels_deg",
+            [0.0, -20.0, 20.0, -40.0, 30.0, -60.0, -80.0],
+        )
+        self.declare_parameter("max_search_cmd_actual_error_deg", 0.0)
         self.declare_parameter("use_gimbal_feedback", True)
         self.declare_parameter("initialize_command_from_feedback", True)
         self.declare_parameter("configure_gimbal_manager", True)
@@ -286,8 +290,12 @@ class GimbalTargetTracker(Node):
             self.search_initial_yaw_amplitude_deg,
             float(self.get_parameter("search_max_yaw_amplitude_deg").value),
         )
-        self.search_pitch_bands_deg = self._float_list_parameter(
-            "search_pitch_bands_deg",
+        self.local_search_pitch_bands_deg = self._float_list_parameter(
+            "local_search_pitch_bands_deg",
+            [0.0],
+        )
+        self.global_search_pitch_levels_deg = self._float_list_parameter(
+            "global_search_pitch_levels_deg",
             [0.0],
         )
         self.max_search_cmd_actual_error_deg = max(
@@ -326,6 +334,7 @@ class GimbalTargetTracker(Node):
         self.search_pitch_band_index = 0
         self.search_direction = 1.0
         self.search_pitch_target_deg = self.cmd_pitch_deg
+        self.search_mode = "none"
         self.search_waiting_for_gimbal = False
         self.has_sent_gimbal_command = False
         self.command_initialized_from_feedback = False
@@ -789,6 +798,7 @@ class GimbalTargetTracker(Node):
 
     def _reset_search(self) -> None:
         self.search_start_time_s = None
+        self.search_mode = "none"
         self.search_waiting_for_gimbal = False
 
     def _update_search_command(self, now_s: float, dt_s: float) -> None:
@@ -797,7 +807,10 @@ class GimbalTargetTracker(Node):
 
         search_elapsed_s = max(0.0, now_s - (self.search_start_time_s or now_s))
         local_search = search_elapsed_s <= self.local_search_duration_s
-        self.tracking_state = "local_search" if local_search else "global_search"
+        next_search_mode = "local" if local_search else "global"
+        if next_search_mode != self.search_mode:
+            self._set_search_mode(next_search_mode)
+        self.tracking_state = f"{self.search_mode}_search"
 
         if local_search:
             yaw_min_deg, yaw_max_deg = self._local_search_yaw_limits(
@@ -836,7 +849,7 @@ class GimbalTargetTracker(Node):
         self.search_start_time_s = now_s
         self.search_waiting_for_gimbal = False
         self.search_direction = 1.0
-        self.search_pitch_band_index = 0
+        self.search_mode = "none"
 
         self.search_anchor_yaw_deg = self._search_anchor_yaw_deg(now_s)
         self.search_anchor_pitch_deg = self._search_anchor_pitch_deg(now_s)
@@ -850,6 +863,11 @@ class GimbalTargetTracker(Node):
             self.min_pitch_deg,
             self.max_pitch_deg,
         )
+        self._set_search_mode("local")
+
+    def _set_search_mode(self, search_mode: str) -> None:
+        self.search_mode = search_mode
+        self.search_pitch_band_index = 0
         self._set_search_pitch_target()
 
     def _search_anchor_yaw_deg(self, now_s: float) -> float:
@@ -896,18 +914,30 @@ class GimbalTargetTracker(Node):
         )
 
     def _advance_search_pitch_band(self) -> None:
+        pitch_targets = self._active_search_pitch_targets()
         self.search_pitch_band_index = (
             self.search_pitch_band_index + 1
-        ) % len(self.search_pitch_bands_deg)
+        ) % len(pitch_targets)
         self._set_search_pitch_target()
 
     def _set_search_pitch_target(self) -> None:
-        pitch_offset_deg = self.search_pitch_bands_deg[self.search_pitch_band_index]
+        pitch_targets = self._active_search_pitch_targets()
+        pitch_value_deg = pitch_targets[self.search_pitch_band_index]
+        if self.search_mode == "global":
+            target_pitch_deg = pitch_value_deg
+        else:
+            target_pitch_deg = self.search_anchor_pitch_deg + pitch_value_deg
+
         self.search_pitch_target_deg = clamp(
-            self.search_anchor_pitch_deg + pitch_offset_deg,
+            target_pitch_deg,
             self.min_pitch_deg,
             self.max_pitch_deg,
         )
+
+    def _active_search_pitch_targets(self) -> list[float]:
+        if self.search_mode == "global":
+            return self.global_search_pitch_levels_deg
+        return self.local_search_pitch_bands_deg
 
     def _search_gimbal_lag_too_large(self, now_s: float) -> bool:
         if self.max_search_cmd_actual_error_deg <= 0.0:
@@ -1179,6 +1209,7 @@ class GimbalTargetTracker(Node):
                 "search_pitch_band_index",
                 float(self.search_pitch_band_index),
             ),
+            self._diagnostic_value("search_mode", self.search_mode),
             self._diagnostic_value(
                 "search_pitch_target_deg",
                 self.search_pitch_target_deg,
