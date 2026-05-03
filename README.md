@@ -309,7 +309,8 @@ ros2 topic echo /fmu/out/gimbal_device_attitude_status --once
 
 - `ENABLE_GIMBAL_TRACKING=true`。
 - `GIMBAL_INPUT_TOPIC` 与 `YOLO_TRACKS_TOPIC` 一致。
-- `/fmu/in/gimbal_manager_set_attitude` 有持续 setpoint；如果没有该 topic，重新启动 `scripts/start_px4_gazebo.sh` 让 PX4 根据 `/home/zk/PX4-Autopilot/src/modules/uxrce_dds_client/dds_topics.yaml` 重新生成 XRCE-DDS topic。
+- `/fmu/in/gimbal_manager_set_attitude` 有持续 setpoint；如果没有该 topic，重新启动 `scripts/start_px4_gazebo.sh` 让 PX4 根据 `/home/zk/PX4-Autopilot/src/modules/uxrce_dds_client/dds_topics.yaml` 重新生成 XRCE-DDS topic。在178行新增topic: /fmu/in/gimbal_manager_set_attitude
+  type: px4_msgs::msg::GimbalManagerSetAttitude
 - `src/uav_waypoint_tracking/config/gimbal_tracking.yaml` 中的 `target_class_id`、`target_track_id`、`min_score` 是否合理。
 - 云台方向反了时，修改 `yaw_error_sign` 或 `pitch_error_sign`。
 
