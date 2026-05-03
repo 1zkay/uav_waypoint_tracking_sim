@@ -27,7 +27,8 @@ yolo_tracker(ByteTrack) ──► /x500_0/yolo/tracks
         │     /fmu/out/gimbal_device_attitude_status
         │                              │
         │                              ▼
-        └────────────────► /fmu/in/vehicle_command
+        ├────────────────► /fmu/in/gimbal_manager_set_attitude
+        └──── configure ─► /fmu/in/vehicle_command
 ```
 
 `gimbal_target_tracker` 不控制无人机位置，只控制主机云台。无人机 0 的航点跟踪、目标机的航点跟踪、ByteTrack 目标跟踪和云台视觉伺服保持分层独立。
@@ -49,7 +50,7 @@ yolo_tracker(ByteTrack) ──► /x500_0/yolo/tracks
 - YOLO ROS wrapper：负责图像检测或跟踪，但一般不直接负责 PX4 gimbal manager 指令。
 - 多无人机 Gazebo / PX4 demo：负责多机仿真或航点控制，但不直接解决“目标无人机始终位于某一架机云台相机中心”的问题。
 
-因此，本仓库采用轻量集成方案：在现有 ROS 2 / PX4 / Gazebo Harmonic 工程中加入 `yolo_tracker` 和 `gimbal_target_tracker` 两个独立节点，并复用 PX4 `VehicleCommand` 通道。
+因此，本仓库采用轻量集成方案：在现有 ROS 2 / PX4 / Gazebo Harmonic 工程中加入 `yolo_tracker` 和 `gimbal_target_tracker` 两个独立节点。云台连续闭环使用 PX4 gimbal manager 高频 setpoint topic，`VehicleCommand` 只用于一次性 gimbal manager 配置和兼容回退。
 
 ## 启动方式
 
@@ -84,6 +85,7 @@ ros2 run uav_waypoint_tracking gimbal_target_tracker \
   -p detections_topic:=/x500_0/yolo/tracks \
   -p camera_info_topic:=/x500_0/camera/camera_info \
   -p gimbal_attitude_topic:=/fmu/out/gimbal_device_attitude_status \
+  -p gimbal_set_attitude_topic:=/fmu/in/gimbal_manager_set_attitude \
   -p vehicle_command_topic:=/fmu/in/vehicle_command
 ```
 
@@ -123,8 +125,10 @@ src/uav_waypoint_tracking/config/gimbal_tracking.yaml
 - `yaw_error_sign`
 - `pitch_error_sign`
 - `yaw_frame`
+- `command_interface`
 - `hold_last_command_on_loss`
 - `use_gimbal_feedback`
+- `configure_gimbal_manager`
 
 配置优先级为：
 
@@ -151,6 +155,7 @@ GIMBAL_INPUT_TOPIC=/x500_0/yolo/tracks \
 - `YOLO_TRACKS_TOPIC`：`yolo_tracker` 发布的跟踪结果 topic。
 - `GIMBAL_INPUT_TOPIC`：`gimbal_target_tracker` 订阅的 `Detection2DArray` topic，默认等于 `YOLO_TRACKS_TOPIC`。
 - `GIMBAL_ATTITUDE_TOPIC`：云台真实姿态反馈 topic，默认 `/fmu/out/gimbal_device_attitude_status`。
+- `GIMBAL_SET_ATTITUDE_TOPIC`：云台高频 setpoint topic，默认 `/fmu/in/gimbal_manager_set_attitude`。
 - `CAMERA_INFO_TOPIC`：云台节点订阅的 ROS `sensor_msgs/CameraInfo` topic，默认 `/x500_0/camera/camera_info`。
 - `YOLO_TRACKING_CONFIG_FILE`：可选，自定义 YOLO/ByteTrack 参数文件。
 - `GIMBAL_CONFIG_FILE`：可选，自定义云台控制参数文件。
@@ -181,15 +186,21 @@ yaw_cmd   = clamp(yaw_cmd   + yaw_rate   * dt, min_yaw,   max_yaw)
 pitch_cmd = clamp(pitch_cmd + pitch_rate * dt, min_pitch, max_pitch)
 ```
 
-最后通过 `VehicleCommand` 发送 `MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW`。默认角度单位为 degree。诊断话题 `/x500_0/gimbal_target_tracker/error` 中的 `vector.x/y` 现在分别表示 yaw/pitch 视线角误差，单位为 degree，`vector.z` 为目标置信度。
+最后默认通过 `/fmu/in/gimbal_manager_set_attitude` 发布 `px4_msgs/msg/GimbalManagerSetAttitude`。这对应 MAVLink gimbal manager 的高频 setpoint 路径：MAVLink 标准中 `MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW` 是低频命令，连续流式控制应使用 `GIMBAL_MANAGER_SET_PITCHYAW`；PX4 在 ROS 2 / uORB 侧用 `gimbal_manager_set_attitude` 承载等价的姿态 setpoint。节点会把内部的 `pitch/yaw` 角转换成四元数 `q` 发布，角速度字段设为 `NaN`，表示只给角度目标。
+
+节点仍会通过 `/fmu/in/vehicle_command` 发送一次 `MAV_CMD_DO_GIMBAL_MANAGER_CONFIGURE`，把当前 `source_system/source_component` 设置为 gimbal manager primary control；如需回退到旧实现，可将 `command_interface` 改为 `vehicle_command`，此时会连续发送 `MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW`。
+
+诊断话题 `/x500_0/gimbal_target_tracker/error` 中的 `vector.x/y` 现在分别表示 yaw/pitch 视线角误差，单位为 degree，`vector.z` 为目标置信度。
 
 `yaw_frame` 默认是 `vehicle`，节点会发送 MAVLink `GIMBAL_MANAGER_FLAGS_YAW_IN_VEHICLE_FRAME`，使 yaw 命令明确按机体系解释；如需地理系 yaw，可改为 `earth`，节点会发送 `GIMBAL_MANAGER_FLAGS_YAW_LOCK | GIMBAL_MANAGER_FLAGS_YAW_IN_EARTH_FRAME`，同时兼容当前 PX4 对 `YAW_LOCK` 的处理。
 
 节点默认订阅 `/fmu/out/gimbal_device_attitude_status`，并在反馈消息的 yaw frame 与当前 `yaw_frame` 配置一致时，用云台反馈四元数同步内部 `pitch/yaw` 状态；这样控制积分从实际云台角度继续，而不是只依赖上一次发送的命令。当前 Gazebo 云台反馈按 vehicle frame 发布，因此默认 `yaw_frame: vehicle` 与反馈一致。如果需要回退到纯命令积分，可将 `use_gimbal_feedback` 设为 `false`。
 
+注意：本机 PX4 的 `/home/zk/PX4-Autopilot/src/modules/uxrce_dds_client/dds_topics.yaml` 已加入 `/fmu/in/gimbal_manager_set_attitude`。修改该文件后需要重新启动 `scripts/start_px4_gazebo.sh`，让 PX4 重新构建并生成 XRCE-DDS topic 支持。
+
 ## 目标锁定
 
-默认 `lock_target_track: true`。节点会在通过 `target_class_id`、`min_score` 筛选后锁定一个 `Detection2D.id`，后续只跟踪同一 `track_id`：
+`lock_target_track` 控制是否锁定同一个 `Detection2D.id`。当前 YAML 配置为 `false`，即每帧跟踪筛选后的最高置信度目标；如果改为 `true`，节点会在通过 `target_class_id`、`min_score` 筛选后锁定一个 `track_id`：
 
 ```text
 target_track_id 非空：只跟踪指定 track id
@@ -222,6 +233,7 @@ ros2 daemon start
 ros2 topic list | rg 'x500_0/(camera|yolo|gimbal)'
 ros2 topic echo /x500_0/camera/camera_info --once
 ros2 topic echo /x500_0/yolo/tracks --once
+ros2 topic echo /fmu/in/gimbal_manager_set_attitude --once
 ros2 topic echo /fmu/out/gimbal_device_attitude_status --once
 ros2 topic echo /x500_0/gimbal_target_tracker/error --once
 ros2 topic echo /x500_0/gimbal_target_tracker/tracking_active --once
@@ -241,7 +253,8 @@ ros2 topic echo /x500_0/gimbal_target_tracker/tracking_active --once
 3. `gimbal_tracking.yaml` 中的 `target_track_id` 是否指定了当前不存在的 track id。
 4. `gimbal_tracking.yaml` 中的 `min_score` 是否过高。
 5. `/fmu/out/gimbal_device_attitude_status` 是否有云台姿态反馈。
-6. `GIMBAL_INPUT_TOPIC` 是否与 `YOLO_TRACKS_TOPIC` 一致。
+6. `/fmu/in/gimbal_manager_set_attitude` 是否持续有 `GimbalManagerSetAttitude`。
+7. `GIMBAL_INPUT_TOPIC` 是否与 `YOLO_TRACKS_TOPIC` 一致。
 
 如果 `ros2 topic echo /fmu/out/gimbal_device_attitude_status --once` 提示消息类型无效，优先检查当前终端是否已经 `source install/setup.bash`，并确认 `ros2 interface show px4_msgs/msg/GimbalDeviceAttitudeStatus` 能正常显示字段。
 

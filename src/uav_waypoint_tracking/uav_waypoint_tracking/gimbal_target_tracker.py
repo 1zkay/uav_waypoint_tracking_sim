@@ -7,7 +7,11 @@ from dataclasses import dataclass
 
 import rclpy
 from geometry_msgs.msg import Vector3Stamped
-from px4_msgs.msg import GimbalDeviceAttitudeStatus, VehicleCommand
+from px4_msgs.msg import (
+    GimbalDeviceAttitudeStatus,
+    GimbalManagerSetAttitude,
+    VehicleCommand,
+)
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import (
@@ -50,9 +54,12 @@ class GimbalTargetTracker(Node):
     """Keep a detected target near the gimbal camera image center."""
 
     MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW = 1000
+    MAV_CMD_DO_GIMBAL_MANAGER_CONFIGURE = 1001
     GIMBAL_MANAGER_FLAGS_YAW_LOCK = 16
     GIMBAL_MANAGER_FLAGS_YAW_IN_VEHICLE_FRAME = 32
     GIMBAL_MANAGER_FLAGS_YAW_IN_EARTH_FRAME = 64
+    COMMAND_INTERFACE_GIMBAL_MANAGER_SET_ATTITUDE = "gimbal_manager_set_attitude"
+    COMMAND_INTERFACE_VEHICLE_COMMAND = "vehicle_command"
 
     def __init__(self) -> None:
         super().__init__("gimbal_target_tracker")
@@ -64,6 +71,10 @@ class GimbalTargetTracker(Node):
             "/fmu/out/gimbal_device_attitude_status",
         )
         self.declare_parameter("vehicle_command_topic", "/fmu/in/vehicle_command")
+        self.declare_parameter(
+            "gimbal_set_attitude_topic",
+            "/fmu/in/gimbal_manager_set_attitude",
+        )
         self.declare_parameter("error_topic", "/x500_0/gimbal_target_tracker/error")
         self.declare_parameter(
             "tracking_active_topic",
@@ -104,10 +115,15 @@ class GimbalTargetTracker(Node):
         self.declare_parameter("source_component", 1)
         self.declare_parameter("gimbal_device_id", 0.0)
         self.declare_parameter("yaw_frame", "vehicle")
+        self.declare_parameter(
+            "command_interface",
+            self.COMMAND_INTERFACE_GIMBAL_MANAGER_SET_ATTITUDE,
+        )
 
         self.declare_parameter("hold_last_command_on_loss", True)
         self.declare_parameter("send_command_before_first_detection", False)
         self.declare_parameter("use_gimbal_feedback", True)
+        self.declare_parameter("configure_gimbal_manager", True)
 
         self.detections_topic = str(self.get_parameter("detections_topic").value)
         self.camera_info_topic = str(self.get_parameter("camera_info_topic").value)
@@ -116,6 +132,9 @@ class GimbalTargetTracker(Node):
         )
         self.vehicle_command_topic = str(
             self.get_parameter("vehicle_command_topic").value
+        )
+        self.gimbal_set_attitude_topic = str(
+            self.get_parameter("gimbal_set_attitude_topic").value
         )
         self.error_topic = str(self.get_parameter("error_topic").value)
         self.tracking_active_topic = str(
@@ -171,6 +190,10 @@ class GimbalTargetTracker(Node):
         self.gimbal_device_id = float(self.get_parameter("gimbal_device_id").value)
         self.yaw_frame = str(self.get_parameter("yaw_frame").value).strip().lower()
         self.gimbal_manager_flags = float(self._gimbal_manager_flags())
+        self.command_interface = (
+            str(self.get_parameter("command_interface").value).strip().lower()
+        )
+        self._validate_command_interface()
 
         self.hold_last_command_on_loss = bool(
             self.get_parameter("hold_last_command_on_loss").value
@@ -181,12 +204,16 @@ class GimbalTargetTracker(Node):
         self.use_gimbal_feedback = bool(
             self.get_parameter("use_gimbal_feedback").value
         )
+        self.configure_gimbal_manager = bool(
+            self.get_parameter("configure_gimbal_manager").value
+        )
 
         self.last_detection: SelectedDetection | None = None
         self.last_detection_time_s: float | None = None
         self.last_update_time_s: float | None = None
         self.last_gimbal_feedback_time_s: float | None = None
         self.has_sent_gimbal_command = False
+        self.has_sent_gimbal_configure = False
         self.camera_intrinsics = self._fallback_intrinsics()
         self.locked_track_id = self.target_track_id or None
         self.warned_feedback_frame_mismatch = False
@@ -201,6 +228,11 @@ class GimbalTargetTracker(Node):
         self.command_pub = self.create_publisher(
             VehicleCommand,
             self.vehicle_command_topic,
+            px4_qos,
+        )
+        self.gimbal_set_attitude_pub = self.create_publisher(
+            GimbalManagerSetAttitude,
+            self.gimbal_set_attitude_topic,
             px4_qos,
         )
         self.error_pub = self.create_publisher(Vector3Stamped, self.error_topic, 10)
@@ -238,7 +270,9 @@ class GimbalTargetTracker(Node):
             "Gimbal target tracker ready: "
             f"detections={self.detections_topic}, camera_info={self.camera_info_topic}, "
             f"gimbal_attitude={self.gimbal_attitude_topic}, "
-            f"command={self.vehicle_command_topic}, class={target_filter}, "
+            f"command_interface={self.command_interface}, "
+            f"command={self.vehicle_command_topic}, "
+            f"set_attitude={self.gimbal_set_attitude_topic}, class={target_filter}, "
             f"track={track_filter}, yaw_frame={self.yaw_frame}, "
             f"rate={self.control_rate_hz:.1f} Hz"
         )
@@ -349,6 +383,17 @@ class GimbalTargetTracker(Node):
             f"got {self.yaw_frame!r}"
         )
 
+    def _validate_command_interface(self) -> None:
+        valid_interfaces = {
+            self.COMMAND_INTERFACE_GIMBAL_MANAGER_SET_ATTITUDE,
+            self.COMMAND_INTERFACE_VEHICLE_COMMAND,
+        }
+        if self.command_interface not in valid_interfaces:
+            raise ValueError(
+                "command_interface must be one of "
+                f"{sorted(valid_interfaces)}; got {self.command_interface!r}"
+            )
+
     def _feedback_yaw_frame(self, device_flags: int) -> str:
         has_vehicle_frame = bool(
             device_flags & self.GIMBAL_MANAGER_FLAGS_YAW_IN_VEHICLE_FRAME
@@ -422,24 +467,28 @@ class GimbalTargetTracker(Node):
         )
 
         now_us = self._now_us()
+        self._publish_gimbal_configure_if_needed(now_us)
         self._publish_error(
             now_us,
             yaw_error_deg,
             pitch_error_deg,
             self.last_detection.score,
         )
-        self._publish_gimbal_command(now_us, self.pitch_deg, self.yaw_deg)
+        self._publish_gimbal_setpoint(now_us, self.pitch_deg, self.yaw_deg)
 
     def _handle_missing_target(self) -> None:
+        now_us = self._now_us()
+        self._publish_gimbal_configure_if_needed(now_us)
+
         if self.has_sent_gimbal_command and self.hold_last_command_on_loss:
-            self._publish_gimbal_command(self._now_us(), self.pitch_deg, self.yaw_deg)
+            self._publish_gimbal_setpoint(now_us, self.pitch_deg, self.yaw_deg)
             return
 
         if (
             not self.has_sent_gimbal_command
             and self.send_command_before_first_detection
         ):
-            self._publish_gimbal_command(self._now_us(), self.pitch_deg, self.yaw_deg)
+            self._publish_gimbal_setpoint(now_us, self.pitch_deg, self.yaw_deg)
 
     def _time_delta_s(self, now_s: float) -> float:
         if self.last_update_time_s is None:
@@ -506,7 +555,74 @@ class GimbalTargetTracker(Node):
         msg.data = active
         self.tracking_active_pub.publish(msg)
 
-    def _publish_gimbal_command(
+    def _publish_gimbal_configure_if_needed(self, now_us: int) -> None:
+        if self.has_sent_gimbal_configure or not self.configure_gimbal_manager:
+            return
+
+        msg = VehicleCommand()
+        msg.timestamp = now_us
+        msg.command = int(
+            getattr(
+                VehicleCommand,
+                "VEHICLE_CMD_DO_GIMBAL_MANAGER_CONFIGURE",
+                self.MAV_CMD_DO_GIMBAL_MANAGER_CONFIGURE,
+            )
+        )
+        msg.param1 = float(self.source_system)
+        msg.param2 = float(self.source_component)
+        msg.param3 = -1.0
+        msg.param4 = -1.0
+        msg.param5 = math.nan
+        msg.param6 = math.nan
+        msg.param7 = self.gimbal_device_id
+        msg.target_system = self.target_system
+        msg.target_component = self.target_component
+        msg.source_system = self.source_system
+        msg.source_component = self.source_component
+        msg.from_external = True
+        self.command_pub.publish(msg)
+        self.has_sent_gimbal_configure = True
+
+    def _publish_gimbal_setpoint(
+        self,
+        now_us: int,
+        pitch_deg: float,
+        yaw_deg: float,
+    ) -> None:
+        if (
+            self.command_interface
+            == self.COMMAND_INTERFACE_GIMBAL_MANAGER_SET_ATTITUDE
+        ):
+            self._publish_gimbal_manager_set_attitude(now_us, pitch_deg, yaw_deg)
+        else:
+            self._publish_gimbal_vehicle_command(now_us, pitch_deg, yaw_deg)
+
+    def _publish_gimbal_manager_set_attitude(
+        self,
+        now_us: int,
+        pitch_deg: float,
+        yaw_deg: float,
+    ) -> None:
+        msg = GimbalManagerSetAttitude()
+        msg.timestamp = now_us
+        msg.origin_sysid = self.source_system
+        msg.origin_compid = self.source_component
+        msg.target_system = self.target_system
+        msg.target_component = self.target_component
+        msg.flags = int(self.gimbal_manager_flags)
+        msg.gimbal_device_id = int(self.gimbal_device_id)
+        msg.q = euler_to_quaternion(
+            0.0,
+            math.radians(pitch_deg),
+            math.radians(yaw_deg),
+        )
+        msg.angular_velocity_x = math.nan
+        msg.angular_velocity_y = math.nan
+        msg.angular_velocity_z = math.nan
+        self.gimbal_set_attitude_pub.publish(msg)
+        self.has_sent_gimbal_command = True
+
+    def _publish_gimbal_vehicle_command(
         self,
         now_us: int,
         pitch_deg: float,
@@ -568,6 +684,26 @@ def quaternion_to_euler_deg(
         math.degrees(pitch_rad),
         math.degrees(yaw_rad),
     )
+
+
+def euler_to_quaternion(
+    roll_rad: float,
+    pitch_rad: float,
+    yaw_rad: float,
+) -> list[float]:
+    cy = math.cos(yaw_rad * 0.5)
+    sy = math.sin(yaw_rad * 0.5)
+    cp = math.cos(pitch_rad * 0.5)
+    sp = math.sin(pitch_rad * 0.5)
+    cr = math.cos(roll_rad * 0.5)
+    sr = math.sin(roll_rad * 0.5)
+
+    return [
+        cr * cp * cy + sr * sp * sy,
+        sr * cp * cy - cr * sp * sy,
+        cr * sp * cy + sr * cp * sy,
+        cr * cp * sy - sr * sp * cy,
+    ]
 
 
 def main(args: list[str] | None = None) -> None:

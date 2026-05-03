@@ -130,7 +130,8 @@ yolo_tracker(ByteTrack) ──► /x500_0/yolo/tracks
         │                 gimbal_target_tracker
         │                              │
         │                              ▼
-        └────────────────► /fmu/in/vehicle_command
+        ├────────────────► /fmu/in/gimbal_manager_set_attitude
+        └──── configure ─► /fmu/in/vehicle_command
 ```
 
 `scripts/start_waypoint_tracking.sh` 默认启动相机桥接和 YOLO + ByteTrack 跟踪，权重文件为仓库根目录
@@ -155,7 +156,7 @@ ENABLE_CAMERA_BRIDGE=false ENABLE_YOLO_TRACKING=false ./scripts/start_waypoint_t
 ENABLE_GIMBAL_TRACKING=true ./scripts/start_waypoint_tracking.sh
 ```
 
-默认情况下，`gimbal_target_tracker` 订阅 `GIMBAL_INPUT_TOPIC=/x500_0/yolo/tracks`、`/x500_0/camera/camera_info` 和 `/fmu/out/gimbal_device_attitude_status`，锁定同一个 ByteTrack `Detection2D.id`，并根据跟踪框中心与相机内参计算出的视线角误差发送 PX4 gimbal manager pitch/yaw 命令。详细说明见 `docs/gimbal_target_tracking.md`。
+默认情况下，`gimbal_target_tracker` 订阅 `GIMBAL_INPUT_TOPIC=/x500_0/yolo/tracks`、`/x500_0/camera/camera_info` 和 `/fmu/out/gimbal_device_attitude_status`，并根据跟踪框中心与相机内参计算出的视线角误差，向 `/fmu/in/gimbal_manager_set_attitude` 发布 PX4 gimbal manager 高频姿态 setpoint；`/fmu/in/vehicle_command` 只用于一次性 gimbal manager 配置和兼容回退。详细说明见 `docs/gimbal_target_tracking.md`。
 
 查看带 ByteTrack 跟踪标签的相机窗口时，`rqt_image_view` 终端不要激活 `/home/zk/px4-venv`，
 否则可能找不到系统 PyQt5：
@@ -180,7 +181,7 @@ source install/setup.bash
 视觉链路常用配置文件：
 
 - `src/uav_waypoint_tracking/config/yolo_tracking.yaml`: YOLO/ByteTrack 参数，例如 `tracker_config`、`confidence_threshold`、`iou_threshold`、`image_size`、`classes`、`device`。
-- `src/uav_waypoint_tracking/config/gimbal_tracking.yaml`: 云台视觉伺服参数，例如 `target_class_id`、`target_track_id`、`lock_target_track`、`min_score`、`fallback_fx_px`、`fallback_fy_px`、`deadband_angle_deg`、`yaw_rate_gain_s_inv`、`pitch_rate_gain_s_inv`、`yaw_frame`、`use_gimbal_feedback`。
+- `src/uav_waypoint_tracking/config/gimbal_tracking.yaml`: 云台视觉伺服参数，例如 `target_class_id`、`target_track_id`、`lock_target_track`、`min_score`、`fallback_fx_px`、`fallback_fy_px`、`deadband_angle_deg`、`yaw_rate_gain_s_inv`、`pitch_rate_gain_s_inv`、`yaw_frame`、`command_interface`、`use_gimbal_feedback`。
 
 ## 风场
 
@@ -262,6 +263,7 @@ LOG_ROOT=/home/zk/uav_logs RUN_ID=wind_3ms_figure8 ./scripts/start_waypoint_trac
 - `/x500_0/yolo/tracks_image`: YOLO + ByteTrack 标注后的图像。
 - `/x500_0/gimbal_target_tracker/error`: 云台视觉伺服视线角误差，`vector.x/y` 分别为 yaw/pitch 角误差，单位为 degree。
 - `/x500_0/gimbal_target_tracker/tracking_active`: 云台节点是否收到新鲜目标跟踪结果。
+- `/fmu/in/gimbal_manager_set_attitude`: 云台高频姿态 setpoint，类型为 `px4_msgs/msg/GimbalManagerSetAttitude`。
 - `/fmu/out/gimbal_device_attitude_status`: PX4 云台真实姿态反馈。
 - `/target/waypoint_markers`: 目标无人机航点可视化。
 - `/target/waypoint_path`: 目标无人机规划路径。
@@ -299,6 +301,7 @@ ros2 topic echo /x500_0/yolo/tracks --once
 ```bash
 ros2 topic echo /x500_0/gimbal_target_tracker/error --once
 ros2 topic echo /x500_0/gimbal_target_tracker/tracking_active --once
+ros2 topic echo /fmu/in/gimbal_manager_set_attitude --once
 ros2 topic echo /fmu/out/gimbal_device_attitude_status --once
 ```
 
@@ -306,6 +309,7 @@ ros2 topic echo /fmu/out/gimbal_device_attitude_status --once
 
 - `ENABLE_GIMBAL_TRACKING=true`。
 - `GIMBAL_INPUT_TOPIC` 与 `YOLO_TRACKS_TOPIC` 一致。
+- `/fmu/in/gimbal_manager_set_attitude` 有持续 setpoint；如果没有该 topic，重新启动 `scripts/start_px4_gazebo.sh` 让 PX4 根据 `/home/zk/PX4-Autopilot/src/modules/uxrce_dds_client/dds_topics.yaml` 重新生成 XRCE-DDS topic。
 - `src/uav_waypoint_tracking/config/gimbal_tracking.yaml` 中的 `target_class_id`、`target_track_id`、`min_score` 是否合理。
 - 云台方向反了时，修改 `yaw_error_sign` 或 `pitch_error_sign`。
 

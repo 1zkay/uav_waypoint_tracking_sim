@@ -41,8 +41,12 @@ gimbal_target_tracker:
     gimbal_device_id: 0.0
     # vehicle: yaw relative to vehicle heading; earth: yaw relative to North.
     yaw_frame: vehicle
+    # Use the high-rate PX4 gimbal manager setpoint topic for continuous servoing.
+    # vehicle_command remains available as a compatibility fallback.
+    command_interface: gimbal_manager_set_attitude
 
     # Safety/diagnostic behavior.
     hold_last_command_on_loss: true
     send_command_before_first_detection: false
     use_gimbal_feedback: true
+    configure_gimbal_manager: true

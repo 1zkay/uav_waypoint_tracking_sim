@@ -49,6 +49,7 @@ def generate_launch_description():
     gimbal_config_file = LaunchConfiguration("gimbal_config_file")
     gimbal_input_topic = LaunchConfiguration("gimbal_input_topic")
     gimbal_attitude_topic = LaunchConfiguration("gimbal_attitude_topic")
+    gimbal_set_attitude_topic = LaunchConfiguration("gimbal_set_attitude_topic")
 
     return LaunchDescription(
         [
@@ -244,6 +245,11 @@ def generate_launch_description():
                 default_value="/fmu/out/gimbal_device_attitude_status",
                 description="PX4 gimbal device attitude feedback topic.",
             ),
+            DeclareLaunchArgument(
+                "gimbal_set_attitude_topic",
+                default_value="/fmu/in/gimbal_manager_set_attitude",
+                description="PX4 high-rate gimbal manager attitude setpoint input topic.",
+            ),
             Node(
                 package="uav_waypoint_tracking",
                 executable="waypoint_tracker",
@@ -366,6 +372,7 @@ def generate_launch_description():
                         "detections_topic": gimbal_input_topic,
                         "camera_info_topic": camera_info_topic,
                         "gimbal_attitude_topic": gimbal_attitude_topic,
+                        "gimbal_set_attitude_topic": gimbal_set_attitude_topic,
                         "vehicle_command_topic": vehicle_command_topic,
                         "target_system": ParameterValue(target_system, value_type=int),
                         "target_component": ParameterValue(target_component, value_type=int),
