@@ -5,6 +5,7 @@ gimbal_target_tracker:
     error_topic: /x500_0/gimbal_target_tracker/error
     tracking_active_topic: /x500_0/gimbal_target_tracker/tracking_active
     state_topic: /x500_0/gimbal_target_tracker/state
+    camera_image_topic: /x500_0/camera/image_raw
 
     # Detection selection.
     target_class_id: ""
@@ -12,6 +13,8 @@ gimbal_target_tracker:
     lock_target_track: true
     min_score: 0.35
     lost_timeout_s: 0.8
+    camera_image_timeout_s: 1.0
+    detections_stream_timeout_s: 2.0
 
     # Camera-calibrated image-plane visual-servo loop. CameraInfo is preferred;
     # fallback intrinsics match the current Gazebo gimbal camera model.
@@ -55,6 +58,15 @@ gimbal_target_tracker:
     # Safety/diagnostic behavior.
     hold_last_command_on_loss: true
     send_command_before_first_detection: false
+    search_enabled: true
+    search_after_lost_s: 1.0
+    local_search_duration_s: 8.0
+    search_yaw_rate_deg_s: 12.0
+    search_pitch_rate_deg_s: 8.0
+    search_initial_yaw_amplitude_deg: 10.0
+    search_max_yaw_amplitude_deg: 90.0
+    search_pitch_bands_deg: [0.0, -8.0, 8.0, -16.0, 16.0]
+    max_search_cmd_actual_error_deg: 20.0
     use_gimbal_feedback: true
     initialize_command_from_feedback: true
     configure_gimbal_manager: true

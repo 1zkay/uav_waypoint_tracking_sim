@@ -376,6 +376,7 @@ def generate_launch_description():
                     gimbal_config_file,
                     {
                         "detections_topic": gimbal_input_topic,
+                        "camera_image_topic": camera_image_topic,
                         "camera_info_topic": camera_info_topic,
                         "gimbal_attitude_topic": gimbal_attitude_topic,
                         "gimbal_set_attitude_topic": gimbal_set_attitude_topic,

@@ -182,7 +182,7 @@ source install/setup.bash
 视觉链路常用配置文件：
 
 - `src/uav_waypoint_tracking/config/yolo_tracking.yaml`: YOLO/BoT-SORT 参数，例如 `tracker_config`、`confidence_threshold`、`iou_threshold`、`image_size`、`classes`、`device`。
-- `src/uav_waypoint_tracking/config/gimbal_tracking.yaml`: 云台视觉伺服参数，例如 `target_class_id`、`target_track_id`、`lock_target_track`、`min_score`、`fallback_fx_px`、`fallback_fy_px`、`deadband_angle_deg`、`yaw_kp_s_inv`、`pitch_kp_s_inv`、`yaw_ki_s_inv2`、`pitch_ki_s_inv2`、`yaw_frame`、`command_interface`、`use_gimbal_feedback`、`initialize_command_from_feedback`。
+- `src/uav_waypoint_tracking/config/gimbal_tracking.yaml`: 云台视觉伺服参数，例如 `target_class_id`、`target_track_id`、`lock_target_track`、`min_score`、`fallback_fx_px`、`fallback_fy_px`、`deadband_angle_deg`、`yaw_kp_s_inv`、`pitch_kp_s_inv`、`yaw_ki_s_inv2`、`pitch_ki_s_inv2`、`search_enabled`、`search_yaw_rate_deg_s`、`yaw_frame`、`command_interface`、`use_gimbal_feedback`、`initialize_command_from_feedback`。
 
 ## 风场
 
@@ -264,7 +264,7 @@ LOG_ROOT=/home/zk/uav_logs RUN_ID=wind_3ms_figure8 ./scripts/start_waypoint_trac
 - `/x500_0/yolo/tracks_image`: YOLO + BoT-SORT 标注后的图像。
 - `/x500_0/gimbal_target_tracker/error`: 云台视觉伺服视线角误差，`vector.x/y` 分别为 yaw/pitch 角误差，单位为 degree。
 - `/x500_0/gimbal_target_tracker/tracking_active`: 云台节点是否收到新鲜目标跟踪结果。
-- `/x500_0/gimbal_target_tracker/state`: 云台控制诊断，包含 `cmd_yaw/cmd_pitch`、`actual_yaw/actual_pitch`、`cmd-actual`、积分项和反馈年龄。
+- `/x500_0/gimbal_target_tracker/state`: 云台控制诊断，包含状态机状态、`cmd_yaw/cmd_pitch`、`actual_yaw/actual_pitch`、`cmd-actual`、积分项、反馈年龄和搜索状态。
 - `/fmu/in/gimbal_manager_set_attitude`: 云台高频姿态 setpoint，类型为 `px4_msgs/msg/GimbalManagerSetAttitude`。
 - `/fmu/out/gimbal_device_attitude_status`: PX4 云台真实姿态反馈。
 - `/target/waypoint_markers`: 目标无人机航点可视化。

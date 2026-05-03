@@ -23,7 +23,7 @@ from rclpy.qos import (
     ReliabilityPolicy,
     qos_profile_sensor_data,
 )
-from sensor_msgs.msg import CameraInfo
+from sensor_msgs.msg import CameraInfo, Image
 from std_msgs.msg import Bool
 from vision_msgs.msg import Detection2D, Detection2DArray
 
@@ -67,6 +67,7 @@ class GimbalTargetTracker(Node):
         super().__init__("gimbal_target_tracker")
 
         self.declare_parameter("detections_topic", "/x500_0/yolo/tracks")
+        self.declare_parameter("camera_image_topic", "/x500_0/camera/image_raw")
         self.declare_parameter("camera_info_topic", "/x500_0/camera/camera_info")
         self.declare_parameter(
             "gimbal_attitude_topic",
@@ -94,6 +95,8 @@ class GimbalTargetTracker(Node):
         self.declare_parameter("min_score", 0.35)
         self.declare_parameter("control_rate_hz", 20.0)
         self.declare_parameter("lost_timeout_s", 0.8)
+        self.declare_parameter("camera_image_timeout_s", 1.0)
+        self.declare_parameter("detections_stream_timeout_s", 2.0)
         self.declare_parameter("fallback_fx_px", 410.93927419797166)
         self.declare_parameter("fallback_fy_px", 410.93927419797166)
         self.declare_parameter("fallback_cx_px", 640.0)
@@ -135,6 +138,18 @@ class GimbalTargetTracker(Node):
 
         self.declare_parameter("hold_last_command_on_loss", True)
         self.declare_parameter("send_command_before_first_detection", False)
+        self.declare_parameter("search_enabled", True)
+        self.declare_parameter("search_after_lost_s", 1.0)
+        self.declare_parameter("local_search_duration_s", 8.0)
+        self.declare_parameter("search_yaw_rate_deg_s", 12.0)
+        self.declare_parameter("search_pitch_rate_deg_s", 8.0)
+        self.declare_parameter("search_initial_yaw_amplitude_deg", 10.0)
+        self.declare_parameter("search_max_yaw_amplitude_deg", 90.0)
+        self.declare_parameter(
+            "search_pitch_bands_deg",
+            [0.0, -8.0, 8.0, -16.0, 16.0],
+        )
+        self.declare_parameter("max_search_cmd_actual_error_deg", 20.0)
         self.declare_parameter("use_gimbal_feedback", True)
         self.declare_parameter("initialize_command_from_feedback", True)
         self.declare_parameter("configure_gimbal_manager", True)
@@ -142,6 +157,7 @@ class GimbalTargetTracker(Node):
         self.declare_parameter("configure_max_attempts", 0)
 
         self.detections_topic = str(self.get_parameter("detections_topic").value)
+        self.camera_image_topic = str(self.get_parameter("camera_image_topic").value)
         self.camera_info_topic = str(self.get_parameter("camera_info_topic").value)
         self.gimbal_attitude_topic = str(
             self.get_parameter("gimbal_attitude_topic").value
@@ -167,6 +183,14 @@ class GimbalTargetTracker(Node):
         self.min_score = float(self.get_parameter("min_score").value)
         self.control_rate_hz = float(self.get_parameter("control_rate_hz").value)
         self.lost_timeout_s = float(self.get_parameter("lost_timeout_s").value)
+        self.camera_image_timeout_s = max(
+            0.0,
+            float(self.get_parameter("camera_image_timeout_s").value),
+        )
+        self.detections_stream_timeout_s = max(
+            0.0,
+            float(self.get_parameter("detections_stream_timeout_s").value),
+        )
         self.fallback_fx_px = float(self.get_parameter("fallback_fx_px").value)
         self.fallback_fy_px = float(self.get_parameter("fallback_fy_px").value)
         self.fallback_cx_px = float(self.get_parameter("fallback_cx_px").value)
@@ -237,6 +261,39 @@ class GimbalTargetTracker(Node):
         self.send_command_before_first_detection = bool(
             self.get_parameter("send_command_before_first_detection").value
         )
+        self.search_enabled = bool(self.get_parameter("search_enabled").value)
+        self.search_after_lost_s = max(
+            0.0,
+            float(self.get_parameter("search_after_lost_s").value),
+        )
+        self.local_search_duration_s = max(
+            0.0,
+            float(self.get_parameter("local_search_duration_s").value),
+        )
+        self.search_yaw_rate_deg_s = max(
+            0.0,
+            float(self.get_parameter("search_yaw_rate_deg_s").value),
+        )
+        self.search_pitch_rate_deg_s = max(
+            0.0,
+            float(self.get_parameter("search_pitch_rate_deg_s").value),
+        )
+        self.search_initial_yaw_amplitude_deg = max(
+            0.0,
+            float(self.get_parameter("search_initial_yaw_amplitude_deg").value),
+        )
+        self.search_max_yaw_amplitude_deg = max(
+            self.search_initial_yaw_amplitude_deg,
+            float(self.get_parameter("search_max_yaw_amplitude_deg").value),
+        )
+        self.search_pitch_bands_deg = self._float_list_parameter(
+            "search_pitch_bands_deg",
+            [0.0],
+        )
+        self.max_search_cmd_actual_error_deg = max(
+            0.0,
+            float(self.get_parameter("max_search_cmd_actual_error_deg").value),
+        )
         self.use_gimbal_feedback = bool(
             self.get_parameter("use_gimbal_feedback").value
         )
@@ -257,8 +314,19 @@ class GimbalTargetTracker(Node):
 
         self.last_detection: SelectedDetection | None = None
         self.last_detection_time_s: float | None = None
+        self.last_detections_msg_time_s: float | None = None
+        self.last_camera_image_time_s: float | None = None
+        self.target_missing_since_s: float | None = None
         self.last_update_time_s: float | None = None
         self.last_gimbal_feedback_time_s: float | None = None
+        self.tracking_state = "initializing"
+        self.search_start_time_s: float | None = None
+        self.search_anchor_yaw_deg = self.cmd_yaw_deg
+        self.search_anchor_pitch_deg = self.cmd_pitch_deg
+        self.search_pitch_band_index = 0
+        self.search_direction = 1.0
+        self.search_pitch_target_deg = self.cmd_pitch_deg
+        self.search_waiting_for_gimbal = False
         self.has_sent_gimbal_command = False
         self.command_initialized_from_feedback = False
         self.has_sent_gimbal_configure = False
@@ -303,6 +371,12 @@ class GimbalTargetTracker(Node):
             10,
         )
         self.create_subscription(
+            Image,
+            self.camera_image_topic,
+            self._camera_image_callback,
+            qos_profile_sensor_data,
+        )
+        self.create_subscription(
             CameraInfo,
             self.camera_info_topic,
             self._camera_info_callback,
@@ -328,7 +402,8 @@ class GimbalTargetTracker(Node):
         track_filter = self.target_track_id or "auto-lock"
         self.get_logger().info(
             "Gimbal target tracker ready: "
-            f"detections={self.detections_topic}, camera_info={self.camera_info_topic}, "
+            f"detections={self.detections_topic}, image={self.camera_image_topic}, "
+            f"camera_info={self.camera_info_topic}, "
             f"gimbal_attitude={self.gimbal_attitude_topic}, "
             f"command_interface={self.command_interface}, "
             f"command={self.vehicle_command_topic}, ack={self.vehicle_command_ack_topic}, "
@@ -336,6 +411,23 @@ class GimbalTargetTracker(Node):
             f"track={track_filter}, yaw_frame={self.yaw_frame}, "
             f"state={self.state_topic}, rate={self.control_rate_hz:.1f} Hz"
         )
+
+    def _float_list_parameter(
+        self,
+        parameter_name: str,
+        fallback: list[float],
+    ) -> list[float]:
+        values = self.get_parameter(parameter_name).value
+        if isinstance(values, str):
+            return fallback
+        try:
+            result = [float(value) for value in values]
+        except (TypeError, ValueError):
+            result = []
+        return result or fallback
+
+    def _camera_image_callback(self, _msg: Image) -> None:
+        self.last_camera_image_time_s = self._now_s()
 
     def _camera_info_callback(self, msg: CameraInfo) -> None:
         if len(msg.k) < 6:
@@ -430,12 +522,17 @@ class GimbalTargetTracker(Node):
             self.last_gimbal_configure_ack_result = result
 
     def _detections_callback(self, msg: Detection2DArray) -> None:
+        now_s = self._now_s()
+        self.last_detections_msg_time_s = now_s
         selected = self._select_detection(msg.detections)
         if selected is None:
+            if self.target_missing_since_s is None:
+                self.target_missing_since_s = now_s
             return
 
         self.last_detection = selected
-        self.last_detection_time_s = self._now_s()
+        self.last_detection_time_s = now_s
+        self.target_missing_since_s = None
         if self.lock_target_track and not self.locked_track_id and selected.track_id:
             self.locked_track_id = selected.track_id
 
@@ -552,8 +649,11 @@ class GimbalTargetTracker(Node):
         self._release_auto_track_lock_if_lost(active)
 
         if not active or self.last_detection is None:
-            self._handle_missing_target()
+            self._handle_missing_target(now_s, dt_s)
             return
+
+        self.tracking_state = "tracking"
+        self._reset_search()
 
         yaw_error_deg, pitch_error_deg = self._camera_angle_error_deg(
             self.last_detection
@@ -598,18 +698,44 @@ class GimbalTargetTracker(Node):
         )
         self._publish_gimbal_state(now_us, active)
 
-    def _handle_missing_target(self) -> None:
+    def _handle_missing_target(self, now_s: float, dt_s: float) -> None:
         now_us = self._now_us()
         self._publish_gimbal_configure_if_needed(now_us)
         self._reset_error_integrals()
+        self._mark_target_missing_if_needed(now_s)
 
+        if not self._has_recent_camera_image(now_s):
+            self.tracking_state = "camera_fault"
+            self._reset_search()
+            self._publish_hold_setpoint_if_needed(now_us)
+        elif not self._has_recent_detections_stream(now_s):
+            self.tracking_state = "vision_stream_lost"
+            self._reset_search()
+            self._publish_hold_setpoint_if_needed(now_us)
+        elif self._should_search_for_target(now_s):
+            self._update_search_command(now_s, dt_s)
+            self._publish_gimbal_setpoint(
+                now_us,
+                self.cmd_pitch_deg,
+                self.cmd_yaw_deg,
+            )
+        else:
+            self.tracking_state = "hold"
+            self._reset_search()
+            self._publish_hold_setpoint_if_needed(now_us)
+
+        self._publish_gimbal_state(now_us, False)
+
+    def _publish_hold_setpoint_if_needed(self, now_us: int) -> None:
         if self.has_sent_gimbal_command and self.hold_last_command_on_loss:
             self._publish_gimbal_setpoint(
                 now_us,
                 self.cmd_pitch_deg,
                 self.cmd_yaw_deg,
             )
-        elif (
+            return
+
+        if (
             not self.has_sent_gimbal_command
             and self.send_command_before_first_detection
         ):
@@ -619,7 +745,190 @@ class GimbalTargetTracker(Node):
                 self.cmd_yaw_deg,
             )
 
-        self._publish_gimbal_state(now_us, False)
+    def _mark_target_missing_if_needed(self, now_s: float) -> None:
+        if self.target_missing_since_s is not None:
+            return
+        if (
+            self.last_detection_time_s is not None
+            and now_s - self.last_detection_time_s > self.lost_timeout_s
+        ):
+            self.target_missing_since_s = self.last_detection_time_s
+            return
+        if self.last_detections_msg_time_s is not None:
+            self.target_missing_since_s = self.last_detections_msg_time_s
+
+    def _should_search_for_target(self, now_s: float) -> bool:
+        if not self.search_enabled:
+            return False
+        missing_duration_s = self._target_missing_duration_s(now_s)
+        if missing_duration_s is None:
+            return False
+        return missing_duration_s >= self.search_after_lost_s
+
+    def _target_missing_duration_s(self, now_s: float) -> float | None:
+        if self.target_missing_since_s is None:
+            return None
+        return max(0.0, now_s - self.target_missing_since_s)
+
+    def _has_recent_camera_image(self, now_s: float) -> bool:
+        if self.camera_image_timeout_s <= 0.0:
+            return True
+        return (
+            self.last_camera_image_time_s is not None
+            and now_s - self.last_camera_image_time_s <= self.camera_image_timeout_s
+        )
+
+    def _has_recent_detections_stream(self, now_s: float) -> bool:
+        if self.detections_stream_timeout_s <= 0.0:
+            return True
+        return (
+            self.last_detections_msg_time_s is not None
+            and now_s - self.last_detections_msg_time_s
+            <= self.detections_stream_timeout_s
+        )
+
+    def _reset_search(self) -> None:
+        self.search_start_time_s = None
+        self.search_waiting_for_gimbal = False
+
+    def _update_search_command(self, now_s: float, dt_s: float) -> None:
+        if self.search_start_time_s is None:
+            self._start_search(now_s)
+
+        search_elapsed_s = max(0.0, now_s - (self.search_start_time_s or now_s))
+        local_search = search_elapsed_s <= self.local_search_duration_s
+        self.tracking_state = "local_search" if local_search else "global_search"
+
+        if local_search:
+            yaw_min_deg, yaw_max_deg = self._local_search_yaw_limits(
+                search_elapsed_s
+            )
+        else:
+            yaw_min_deg = self.min_yaw_deg
+            yaw_max_deg = self.max_yaw_deg
+
+        self.cmd_yaw_deg = clamp(self.cmd_yaw_deg, yaw_min_deg, yaw_max_deg)
+        self.search_waiting_for_gimbal = self._search_gimbal_lag_too_large(now_s)
+        if self.search_waiting_for_gimbal:
+            return
+
+        yaw_step_deg = self.search_direction * self.search_yaw_rate_deg_s * dt_s
+        next_yaw_deg = self.cmd_yaw_deg + yaw_step_deg
+        if next_yaw_deg >= yaw_max_deg:
+            self.cmd_yaw_deg = yaw_max_deg
+            self.search_direction = -1.0
+            self._advance_search_pitch_band()
+        elif next_yaw_deg <= yaw_min_deg:
+            self.cmd_yaw_deg = yaw_min_deg
+            self.search_direction = 1.0
+            self._advance_search_pitch_band()
+        else:
+            self.cmd_yaw_deg = next_yaw_deg
+
+        pitch_step_deg = self.search_pitch_rate_deg_s * dt_s
+        self.cmd_pitch_deg = move_toward(
+            self.cmd_pitch_deg,
+            self.search_pitch_target_deg,
+            pitch_step_deg,
+        )
+
+    def _start_search(self, now_s: float) -> None:
+        self.search_start_time_s = now_s
+        self.search_waiting_for_gimbal = False
+        self.search_direction = 1.0
+        self.search_pitch_band_index = 0
+
+        self.search_anchor_yaw_deg = self._search_anchor_yaw_deg(now_s)
+        self.search_anchor_pitch_deg = self._search_anchor_pitch_deg(now_s)
+        self.cmd_yaw_deg = clamp(
+            self.search_anchor_yaw_deg,
+            self.min_yaw_deg,
+            self.max_yaw_deg,
+        )
+        self.cmd_pitch_deg = clamp(
+            self.search_anchor_pitch_deg,
+            self.min_pitch_deg,
+            self.max_pitch_deg,
+        )
+        self._set_search_pitch_target()
+
+    def _search_anchor_yaw_deg(self, now_s: float) -> float:
+        if self._has_fresh_gimbal_feedback(now_s) and self.actual_yaw_deg is not None:
+            return self.actual_yaw_deg
+        return self.cmd_yaw_deg
+
+    def _search_anchor_pitch_deg(self, now_s: float) -> float:
+        if (
+            self._has_fresh_gimbal_feedback(now_s)
+            and self.actual_pitch_deg is not None
+        ):
+            return self.actual_pitch_deg
+        return self.cmd_pitch_deg
+
+    def _local_search_yaw_limits(
+        self,
+        search_elapsed_s: float,
+    ) -> tuple[float, float]:
+        if self.local_search_duration_s <= 0.0:
+            amplitude_deg = self.search_max_yaw_amplitude_deg
+        else:
+            expansion = clamp(
+                search_elapsed_s / self.local_search_duration_s,
+                0.0,
+                1.0,
+            )
+            amplitude_deg = self.search_initial_yaw_amplitude_deg + expansion * (
+                self.search_max_yaw_amplitude_deg
+                - self.search_initial_yaw_amplitude_deg
+            )
+
+        return (
+            clamp(
+                self.search_anchor_yaw_deg - amplitude_deg,
+                self.min_yaw_deg,
+                self.max_yaw_deg,
+            ),
+            clamp(
+                self.search_anchor_yaw_deg + amplitude_deg,
+                self.min_yaw_deg,
+                self.max_yaw_deg,
+            ),
+        )
+
+    def _advance_search_pitch_band(self) -> None:
+        self.search_pitch_band_index = (
+            self.search_pitch_band_index + 1
+        ) % len(self.search_pitch_bands_deg)
+        self._set_search_pitch_target()
+
+    def _set_search_pitch_target(self) -> None:
+        pitch_offset_deg = self.search_pitch_bands_deg[self.search_pitch_band_index]
+        self.search_pitch_target_deg = clamp(
+            self.search_anchor_pitch_deg + pitch_offset_deg,
+            self.min_pitch_deg,
+            self.max_pitch_deg,
+        )
+
+    def _search_gimbal_lag_too_large(self, now_s: float) -> bool:
+        if self.max_search_cmd_actual_error_deg <= 0.0:
+            return False
+        if not self._has_fresh_gimbal_feedback(now_s):
+            return False
+        if self.actual_yaw_deg is None or self.actual_pitch_deg is None:
+            return False
+
+        yaw_error_deg = abs(self.cmd_yaw_deg - self.actual_yaw_deg)
+        pitch_error_deg = abs(self.cmd_pitch_deg - self.actual_pitch_deg)
+        return (
+            max(yaw_error_deg, pitch_error_deg)
+            > self.max_search_cmd_actual_error_deg
+        )
+
+    def _has_fresh_gimbal_feedback(self, now_s: float) -> bool:
+        return (
+            self.last_gimbal_feedback_time_s is not None
+            and now_s - self.last_gimbal_feedback_time_s <= 1.0
+        )
 
     def _update_error_integrals(
         self,
@@ -759,10 +1068,26 @@ class GimbalTargetTracker(Node):
 
     def _publish_gimbal_state(self, now_us: int, active: bool) -> None:
         now_s = now_us * 1e-6
+        camera_image_age_s = (
+            None
+            if self.last_camera_image_time_s is None
+            else max(0.0, now_s - self.last_camera_image_time_s)
+        )
+        detections_stream_age_s = (
+            None
+            if self.last_detections_msg_time_s is None
+            else max(0.0, now_s - self.last_detections_msg_time_s)
+        )
         feedback_age_s = (
             None
             if self.last_gimbal_feedback_time_s is None
             else max(0.0, now_s - self.last_gimbal_feedback_time_s)
+        )
+        target_missing_duration_s = self._target_missing_duration_s(now_s)
+        search_elapsed_s = (
+            None
+            if self.search_start_time_s is None
+            else max(0.0, now_s - self.search_start_time_s)
         )
         cmd_actual_yaw_error_deg = (
             None
@@ -782,7 +1107,16 @@ class GimbalTargetTracker(Node):
         status = DiagnosticStatus()
         status.name = "gimbal_target_tracker"
         status.hardware_id = f"gimbal_device_id={int(self.gimbal_device_id)}"
-        if not self.use_gimbal_feedback:
+        if self.tracking_state == "camera_fault":
+            status.level = DiagnosticStatus.ERROR
+            status.message = "camera image stream lost"
+        elif self.tracking_state == "vision_stream_lost":
+            status.level = DiagnosticStatus.WARN
+            status.message = "detection stream lost"
+        elif self.tracking_state in {"local_search", "global_search"}:
+            status.level = DiagnosticStatus.WARN
+            status.message = self.tracking_state
+        elif not self.use_gimbal_feedback:
             status.level = DiagnosticStatus.OK
             status.message = "gimbal feedback disabled"
         elif feedback_age_s is None:
@@ -796,6 +1130,7 @@ class GimbalTargetTracker(Node):
             status.message = "gimbal feedback active"
 
         status.values = [
+            self._diagnostic_value("state", self.tracking_state),
             self._diagnostic_value("tracking_active", active),
             self._diagnostic_value("cmd_yaw_deg", self.cmd_yaw_deg),
             self._diagnostic_value("cmd_pitch_deg", self.cmd_pitch_deg),
@@ -822,16 +1157,48 @@ class GimbalTargetTracker(Node):
                 "command_initialized_from_feedback",
                 self.command_initialized_from_feedback,
             ),
+            self._diagnostic_value("camera_image_age_s", camera_image_age_s),
+            self._diagnostic_value(
+                "detections_stream_age_s",
+                detections_stream_age_s,
+            ),
+            self._diagnostic_value(
+                "target_missing_duration_s",
+                target_missing_duration_s,
+            ),
+            self._diagnostic_value("search_elapsed_s", search_elapsed_s),
+            self._diagnostic_value(
+                "search_anchor_yaw_deg",
+                self.search_anchor_yaw_deg,
+            ),
+            self._diagnostic_value(
+                "search_anchor_pitch_deg",
+                self.search_anchor_pitch_deg,
+            ),
+            self._diagnostic_value(
+                "search_pitch_band_index",
+                float(self.search_pitch_band_index),
+            ),
+            self._diagnostic_value(
+                "search_pitch_target_deg",
+                self.search_pitch_target_deg,
+            ),
+            self._diagnostic_value(
+                "search_waiting_for_gimbal",
+                self.search_waiting_for_gimbal,
+            ),
         ]
         msg.status.append(status)
         self.state_pub.publish(msg)
 
     @staticmethod
-    def _diagnostic_value(key: str, value: bool | float | None) -> KeyValue:
+    def _diagnostic_value(key: str, value: bool | float | str | None) -> KeyValue:
         item = KeyValue()
         item.key = key
         if isinstance(value, bool):
             item.value = str(value).lower()
+        elif isinstance(value, str):
+            item.value = value
         elif value is None:
             item.value = "nan"
         else:
@@ -973,6 +1340,16 @@ class GimbalTargetTracker(Node):
 
 def clamp(value: float, lower: float, upper: float) -> float:
     return max(lower, min(upper, value))
+
+
+def move_toward(value: float, target: float, max_step: float) -> float:
+    if max_step <= 0.0:
+        return value
+    if value < target:
+        return min(value + max_step, target)
+    if value > target:
+        return max(value - max_step, target)
+    return value
 
 
 def squared_image_distance(a: SelectedDetection, b: SelectedDetection) -> float:

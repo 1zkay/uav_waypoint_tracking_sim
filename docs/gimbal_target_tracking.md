@@ -130,6 +130,17 @@ src/uav_waypoint_tracking/config/gimbal_tracking.yaml
 - `max_pitch_error_integral_deg_s`
 - `yaw_error_sign`
 - `pitch_error_sign`
+- `camera_image_timeout_s`
+- `detections_stream_timeout_s`
+- `search_enabled`
+- `search_after_lost_s`
+- `local_search_duration_s`
+- `search_yaw_rate_deg_s`
+- `search_pitch_rate_deg_s`
+- `search_initial_yaw_amplitude_deg`
+- `search_max_yaw_amplitude_deg`
+- `search_pitch_bands_deg`
+- `max_search_cmd_actual_error_deg`
 - `yaw_frame`
 - `command_interface`
 - `hold_last_command_on_loss`
@@ -216,7 +227,25 @@ cmd_pitch = clamp(cmd_pitch + pitch_rate * dt, min_pitch, max_pitch)
 
 节点默认订阅 `/fmu/out/gimbal_device_attitude_status`，并在反馈消息的 yaw frame 与当前 `yaw_frame` 配置一致时，把反馈四元数解析到 `actual_yaw/actual_pitch`。这两个反馈量不会在控制过程中覆盖 `cmd_yaw/cmd_pitch`，因此云台指令始终由控制器自身连续积分生成。启动阶段如果 `initialize_command_from_feedback=true` 且节点还没有发送过云台命令，第一次有效反馈会用来初始化 `cmd_yaw/cmd_pitch`，避免默认 `initial_*` 与真实云台角不一致造成首次 setpoint 跳变。当前 Gazebo 云台反馈按 vehicle frame 发布，因此默认 `yaw_frame: vehicle` 与反馈一致；如果不需要记录反馈，可将 `use_gimbal_feedback` 设为 `false`。
 
-诊断话题 `/x500_0/gimbal_target_tracker/state` 使用 `diagnostic_msgs/DiagnosticArray` 发布控制状态，包含 `cmd_yaw/cmd_pitch`、`actual_yaw/actual_pitch`、`cmd_actual_*_error`、误差积分、反馈年龄和是否已用反馈初始化命令。
+诊断话题 `/x500_0/gimbal_target_tracker/state` 使用 `diagnostic_msgs/DiagnosticArray` 发布控制状态，包含状态机状态、`cmd_yaw/cmd_pitch`、`actual_yaw/actual_pitch`、`cmd_actual_*_error`、误差积分、图像/检测/反馈年龄、搜索中心、搜索 pitch band 和是否已用反馈初始化命令。
+
+## 目标丢失搜索
+
+云台节点把“无目标”分成两类处理：
+
+```text
+camera_fault:        `/x500_0/camera/image_raw` 超过 camera_image_timeout_s 没有图像帧
+vision_stream_lost:  `/x500_0/yolo/tracks` 超过 detections_stream_timeout_s 没有跟踪消息
+hold:                图像和检测流正常，但目标刚丢失，还未超过 search_after_lost_s
+local_search:        围绕丢失时的云台角做逐步扩大的局部扫描
+global_search:       局部扫描超过 local_search_duration_s 后，在完整 yaw 范围内蛇形扫描
+```
+
+如果是 `camera_fault` 或 `vision_stream_lost`，节点不会主动搜索，因为这通常表示相机桥接、YOLO 节点或上游图像链路异常，而不是目标飞出视场。此时节点只保持最后 setpoint 并在 `/x500_0/gimbal_target_tracker/state` 中报警。
+
+如果图像和检测流都正常但没有目标，节点先短时保持最后 `cmd_yaw/cmd_pitch`。超过 `search_after_lost_s` 后进入搜索：`local_search` 以当前新鲜 `actual_yaw/actual_pitch` 为中心，没有新鲜反馈时以 `cmd_yaw/cmd_pitch` 为中心；yaw 按 `search_yaw_rate_deg_s` 左右扫描，扫描幅度从 `search_initial_yaw_amplitude_deg` 逐步扩大到 `search_max_yaw_amplitude_deg`，pitch 按 `search_pitch_bands_deg` 分层切换。局部搜索超时后进入 `global_search`，在 `min_yaw_deg/max_yaw_deg` 范围内继续按 pitch bands 蛇形扫描。一旦重新收到符合筛选条件的目标，节点重置搜索状态并回到视觉伺服闭环。
+
+搜索时 `actual_yaw/actual_pitch` 仍不覆盖运行中的 `cmd_yaw/cmd_pitch`。它们用于选择搜索中心和监控云台是否跟得上搜索命令；如果 `cmd-actual` 超过 `max_search_cmd_actual_error_deg`，搜索会暂停推进，等待云台跟上，避免外环把 setpoint 推得过远。
 
 注意：本机 PX4 的 `/home/zk/PX4-Autopilot/src/modules/uxrce_dds_client/dds_topics.yaml` 已加入 `/fmu/in/gimbal_manager_set_attitude`。修改该文件后需要重新启动 `scripts/start_px4_gazebo.sh`，让 PX4 重新构建并生成 XRCE-DDS topic 支持。
 
@@ -253,6 +282,7 @@ ros2 daemon start
 
 ```bash
 ros2 topic list | rg 'x500_0/(camera|yolo|gimbal)'
+ros2 topic echo /x500_0/camera/image_raw --once
 ros2 topic echo /x500_0/camera/camera_info --once
 ros2 topic echo /x500_0/yolo/tracks --once
 ros2 topic echo /fmu/in/gimbal_manager_set_attitude --once
