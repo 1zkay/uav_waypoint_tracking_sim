@@ -11,6 +11,7 @@ from px4_msgs.msg import (
     GimbalDeviceAttitudeStatus,
     GimbalManagerSetAttitude,
     VehicleCommand,
+    VehicleCommandAck,
 )
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
@@ -56,8 +57,8 @@ class GimbalTargetTracker(Node):
     MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW = 1000
     MAV_CMD_DO_GIMBAL_MANAGER_CONFIGURE = 1001
     GIMBAL_MANAGER_FLAGS_YAW_LOCK = 16
-    GIMBAL_MANAGER_FLAGS_YAW_IN_VEHICLE_FRAME = 32
-    GIMBAL_MANAGER_FLAGS_YAW_IN_EARTH_FRAME = 64
+    GIMBAL_DEVICE_FLAGS_YAW_IN_VEHICLE_FRAME = 32
+    GIMBAL_DEVICE_FLAGS_YAW_IN_EARTH_FRAME = 64
     COMMAND_INTERFACE_GIMBAL_MANAGER_SET_ATTITUDE = "gimbal_manager_set_attitude"
     COMMAND_INTERFACE_VEHICLE_COMMAND = "vehicle_command"
 
@@ -71,6 +72,10 @@ class GimbalTargetTracker(Node):
             "/fmu/out/gimbal_device_attitude_status",
         )
         self.declare_parameter("vehicle_command_topic", "/fmu/in/vehicle_command")
+        self.declare_parameter(
+            "vehicle_command_ack_topic",
+            "/fmu/out/vehicle_command_ack",
+        )
         self.declare_parameter(
             "gimbal_set_attitude_topic",
             "/fmu/in/gimbal_manager_set_attitude",
@@ -86,7 +91,7 @@ class GimbalTargetTracker(Node):
         self.declare_parameter("lock_target_track", True)
         self.declare_parameter("min_score", 0.35)
         self.declare_parameter("control_rate_hz", 20.0)
-        self.declare_parameter("lost_timeout_s", 0.3)
+        self.declare_parameter("lost_timeout_s", 0.8)
         self.declare_parameter("fallback_fx_px", 410.93927419797166)
         self.declare_parameter("fallback_fy_px", 410.93927419797166)
         self.declare_parameter("fallback_cx_px", 640.0)
@@ -95,12 +100,12 @@ class GimbalTargetTracker(Node):
         self.declare_parameter("fallback_image_height", 720.0)
         self.declare_parameter("deadband_angle_deg", 1.5)
 
-        self.declare_parameter("yaw_rate_gain_s_inv", 0.8)
-        self.declare_parameter("pitch_rate_gain_s_inv", 0.85)
-        self.declare_parameter("max_yaw_rate_deg_s", 60.0)
-        self.declare_parameter("max_pitch_rate_deg_s", 45.0)
+        self.declare_parameter("yaw_rate_gain_s_inv", 0.18)
+        self.declare_parameter("pitch_rate_gain_s_inv", 0.14)
+        self.declare_parameter("max_yaw_rate_deg_s", 18.0)
+        self.declare_parameter("max_pitch_rate_deg_s", 14.0)
         self.declare_parameter("yaw_error_sign", 1.0)
-        self.declare_parameter("pitch_error_sign", -1.0)
+        self.declare_parameter("pitch_error_sign", 1.0)
 
         self.declare_parameter("initial_yaw_deg", 0.0)
         self.declare_parameter("initial_pitch_deg", 0.0)
@@ -124,6 +129,8 @@ class GimbalTargetTracker(Node):
         self.declare_parameter("send_command_before_first_detection", False)
         self.declare_parameter("use_gimbal_feedback", True)
         self.declare_parameter("configure_gimbal_manager", True)
+        self.declare_parameter("configure_retry_period_s", 1.0)
+        self.declare_parameter("configure_max_attempts", 0)
 
         self.detections_topic = str(self.get_parameter("detections_topic").value)
         self.camera_info_topic = str(self.get_parameter("camera_info_topic").value)
@@ -132,6 +139,9 @@ class GimbalTargetTracker(Node):
         )
         self.vehicle_command_topic = str(
             self.get_parameter("vehicle_command_topic").value
+        )
+        self.vehicle_command_ack_topic = str(
+            self.get_parameter("vehicle_command_ack_topic").value
         )
         self.gimbal_set_attitude_topic = str(
             self.get_parameter("gimbal_set_attitude_topic").value
@@ -207,6 +217,14 @@ class GimbalTargetTracker(Node):
         self.configure_gimbal_manager = bool(
             self.get_parameter("configure_gimbal_manager").value
         )
+        self.configure_retry_period_s = max(
+            0.1,
+            float(self.get_parameter("configure_retry_period_s").value),
+        )
+        self.configure_max_attempts = max(
+            0,
+            int(self.get_parameter("configure_max_attempts").value),
+        )
 
         self.last_detection: SelectedDetection | None = None
         self.last_detection_time_s: float | None = None
@@ -214,6 +232,11 @@ class GimbalTargetTracker(Node):
         self.last_gimbal_feedback_time_s: float | None = None
         self.has_sent_gimbal_command = False
         self.has_sent_gimbal_configure = False
+        self.gimbal_configure_accepted = False
+        self.gimbal_configure_attempts = 0
+        self.last_gimbal_configure_time_s: float | None = None
+        self.last_gimbal_configure_ack_result: int | None = None
+        self.warned_gimbal_configure_max_attempts = False
         self.camera_intrinsics = self._fallback_intrinsics()
         self.locked_track_id = self.target_track_id or None
         self.warned_feedback_frame_mismatch = False
@@ -260,6 +283,12 @@ class GimbalTargetTracker(Node):
             self._gimbal_attitude_callback,
             px4_qos,
         )
+        self.create_subscription(
+            VehicleCommandAck,
+            self.vehicle_command_ack_topic,
+            self._vehicle_command_ack_callback,
+            px4_qos,
+        )
 
         timer_period = 1.0 / max(self.control_rate_hz, 1.0)
         self.timer = self.create_timer(timer_period, self._timer_callback)
@@ -271,7 +300,7 @@ class GimbalTargetTracker(Node):
             f"detections={self.detections_topic}, camera_info={self.camera_info_topic}, "
             f"gimbal_attitude={self.gimbal_attitude_topic}, "
             f"command_interface={self.command_interface}, "
-            f"command={self.vehicle_command_topic}, "
+            f"command={self.vehicle_command_topic}, ack={self.vehicle_command_ack_topic}, "
             f"set_attitude={self.gimbal_set_attitude_topic}, class={target_filter}, "
             f"track={track_filter}, yaw_frame={self.yaw_frame}, "
             f"rate={self.control_rate_hz:.1f} Hz"
@@ -318,6 +347,36 @@ class GimbalTargetTracker(Node):
         self.last_gimbal_feedback_time_s = self._now_s()
         self.warned_feedback_frame_mismatch = False
 
+    def _vehicle_command_ack_callback(self, msg: VehicleCommandAck) -> None:
+        if msg.command != self._gimbal_configure_command_id():
+            return
+        if self.gimbal_configure_attempts == 0:
+            return
+        if msg.target_system != self.source_system:
+            return
+        if msg.target_component != self.source_component:
+            return
+
+        result = int(msg.result)
+        accepted_result = int(
+            getattr(VehicleCommandAck, "VEHICLE_CMD_RESULT_ACCEPTED", 0)
+        )
+        if result == accepted_result:
+            if not self.gimbal_configure_accepted:
+                self.get_logger().info(
+                    "Gimbal manager configure accepted "
+                    f"after {self.gimbal_configure_attempts} attempt(s)"
+                )
+            self.gimbal_configure_accepted = True
+            return
+
+        if result != self.last_gimbal_configure_ack_result:
+            self.get_logger().warn(
+                "Gimbal manager configure ACK was not accepted: "
+                f"result={result}"
+            )
+            self.last_gimbal_configure_ack_result = result
+
     def _detections_callback(self, msg: Detection2DArray) -> None:
         selected = self._select_detection(msg.detections)
         if selected is None:
@@ -361,23 +420,27 @@ class GimbalTargetTracker(Node):
                     return candidate
             return None
 
+        if self.lock_target_track and self.last_detection is not None:
+            return min(
+                candidates,
+                key=lambda candidate: squared_image_distance(
+                    candidate,
+                    self.last_detection,
+                ),
+            )
+
         return max(candidates, key=lambda candidate: candidate.score)
 
     def _release_auto_track_lock_if_lost(self, active: bool) -> None:
         if active or self.target_track_id or not self.locked_track_id:
             return
         self.locked_track_id = None
-        self.last_detection = None
-        self.last_detection_time_s = None
 
     def _gimbal_manager_flags(self) -> int:
         if self.yaw_frame == "vehicle":
-            return self.GIMBAL_MANAGER_FLAGS_YAW_IN_VEHICLE_FRAME
+            return 0
         if self.yaw_frame == "earth":
-            return (
-                self.GIMBAL_MANAGER_FLAGS_YAW_LOCK
-                | self.GIMBAL_MANAGER_FLAGS_YAW_IN_EARTH_FRAME
-            )
+            return self.GIMBAL_MANAGER_FLAGS_YAW_LOCK
         raise ValueError(
             "yaw_frame must be 'vehicle' or 'earth'; "
             f"got {self.yaw_frame!r}"
@@ -396,9 +459,11 @@ class GimbalTargetTracker(Node):
 
     def _feedback_yaw_frame(self, device_flags: int) -> str:
         has_vehicle_frame = bool(
-            device_flags & self.GIMBAL_MANAGER_FLAGS_YAW_IN_VEHICLE_FRAME
+            device_flags & self.GIMBAL_DEVICE_FLAGS_YAW_IN_VEHICLE_FRAME
         )
-        has_earth_frame = bool(device_flags & self.GIMBAL_MANAGER_FLAGS_YAW_IN_EARTH_FRAME)
+        has_earth_frame = bool(
+            device_flags & self.GIMBAL_DEVICE_FLAGS_YAW_IN_EARTH_FRAME
+        )
         if has_vehicle_frame and not has_earth_frame:
             return "vehicle"
         if has_earth_frame and not has_vehicle_frame:
@@ -556,18 +621,33 @@ class GimbalTargetTracker(Node):
         self.tracking_active_pub.publish(msg)
 
     def _publish_gimbal_configure_if_needed(self, now_us: int) -> None:
-        if self.has_sent_gimbal_configure or not self.configure_gimbal_manager:
+        if not self.configure_gimbal_manager or self.gimbal_configure_accepted:
+            return
+
+        now_s = now_us * 1e-6
+        if (
+            self.last_gimbal_configure_time_s is not None
+            and now_s - self.last_gimbal_configure_time_s
+            < self.configure_retry_period_s
+        ):
+            return
+
+        if (
+            self.configure_max_attempts > 0
+            and self.gimbal_configure_attempts >= self.configure_max_attempts
+        ):
+            if not self.warned_gimbal_configure_max_attempts:
+                self.get_logger().warn(
+                    "Gimbal manager configure was not accepted after "
+                    f"{self.gimbal_configure_attempts} attempt(s); "
+                    "setpoints may be ignored by PX4"
+                )
+                self.warned_gimbal_configure_max_attempts = True
             return
 
         msg = VehicleCommand()
         msg.timestamp = now_us
-        msg.command = int(
-            getattr(
-                VehicleCommand,
-                "VEHICLE_CMD_DO_GIMBAL_MANAGER_CONFIGURE",
-                self.MAV_CMD_DO_GIMBAL_MANAGER_CONFIGURE,
-            )
-        )
+        msg.command = self._gimbal_configure_command_id()
         msg.param1 = float(self.source_system)
         msg.param2 = float(self.source_component)
         msg.param3 = -1.0
@@ -582,6 +662,8 @@ class GimbalTargetTracker(Node):
         msg.from_external = True
         self.command_pub.publish(msg)
         self.has_sent_gimbal_configure = True
+        self.gimbal_configure_attempts += 1
+        self.last_gimbal_configure_time_s = now_s
 
     def _publish_gimbal_setpoint(
         self,
@@ -630,13 +712,7 @@ class GimbalTargetTracker(Node):
     ) -> None:
         msg = VehicleCommand()
         msg.timestamp = now_us
-        msg.command = int(
-            getattr(
-                VehicleCommand,
-                "VEHICLE_CMD_DO_GIMBAL_MANAGER_PITCHYAW",
-                self.MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW,
-            )
-        )
+        msg.command = self._gimbal_pitchyaw_command_id()
         msg.param1 = float(pitch_deg)
         msg.param2 = float(yaw_deg)
         msg.param3 = math.nan
@@ -652,6 +728,24 @@ class GimbalTargetTracker(Node):
         self.command_pub.publish(msg)
         self.has_sent_gimbal_command = True
 
+    def _gimbal_configure_command_id(self) -> int:
+        return int(
+            getattr(
+                VehicleCommand,
+                "VEHICLE_CMD_DO_GIMBAL_MANAGER_CONFIGURE",
+                self.MAV_CMD_DO_GIMBAL_MANAGER_CONFIGURE,
+            )
+        )
+
+    def _gimbal_pitchyaw_command_id(self) -> int:
+        return int(
+            getattr(
+                VehicleCommand,
+                "VEHICLE_CMD_DO_GIMBAL_MANAGER_PITCHYAW",
+                self.MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW,
+            )
+        )
+
     def _now_s(self) -> float:
         return self.get_clock().now().nanoseconds * 1e-9
 
@@ -661,6 +755,12 @@ class GimbalTargetTracker(Node):
 
 def clamp(value: float, lower: float, upper: float) -> float:
     return max(lower, min(upper, value))
+
+
+def squared_image_distance(a: SelectedDetection, b: SelectedDetection) -> float:
+    dx = a.center_x - b.center_x
+    dy = a.center_y - b.center_y
+    return dx * dx + dy * dy
 
 
 def quaternion_to_euler_deg(

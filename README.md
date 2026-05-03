@@ -156,7 +156,7 @@ ENABLE_CAMERA_BRIDGE=false ENABLE_YOLO_TRACKING=false ./scripts/start_waypoint_t
 ENABLE_GIMBAL_TRACKING=true ./scripts/start_waypoint_tracking.sh
 ```
 
-默认情况下，`gimbal_target_tracker` 订阅 `GIMBAL_INPUT_TOPIC=/x500_0/yolo/tracks`、`/x500_0/camera/camera_info` 和 `/fmu/out/gimbal_device_attitude_status`，并根据跟踪框中心与相机内参计算出的视线角误差，向 `/fmu/in/gimbal_manager_set_attitude` 发布 PX4 gimbal manager 高频姿态 setpoint；`/fmu/in/vehicle_command` 只用于一次性 gimbal manager 配置和兼容回退。详细说明见 `docs/gimbal_target_tracking.md`。
+默认情况下，`gimbal_target_tracker` 订阅 `GIMBAL_INPUT_TOPIC=/x500_0/yolo/tracks`、`/x500_0/camera/camera_info` 和 `/fmu/out/gimbal_device_attitude_status`，并根据跟踪框中心与相机内参计算出的视线角误差，向 `/fmu/in/gimbal_manager_set_attitude` 发布 PX4 gimbal manager 高频姿态 setpoint；`/fmu/in/vehicle_command` 用于 gimbal manager 配置和兼容回退，配置命令会重试直到 PX4 ACK。详细说明见 `docs/gimbal_target_tracking.md`。
 
 查看带 ByteTrack 跟踪标签的相机窗口时，`rqt_image_view` 终端不要激活 `/home/zk/px4-venv`，
 否则可能找不到系统 PyQt5：

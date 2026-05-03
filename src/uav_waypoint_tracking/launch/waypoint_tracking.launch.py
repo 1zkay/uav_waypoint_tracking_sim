@@ -15,6 +15,7 @@ def generate_launch_description():
     offboard_control_mode_topic = LaunchConfiguration("offboard_control_mode_topic")
     trajectory_setpoint_topic = LaunchConfiguration("trajectory_setpoint_topic")
     vehicle_command_topic = LaunchConfiguration("vehicle_command_topic")
+    vehicle_command_ack_topic = LaunchConfiguration("vehicle_command_ack_topic")
     current_index_topic = LaunchConfiguration("current_index_topic")
     target_system = LaunchConfiguration("target_system")
     target_component = LaunchConfiguration("target_component")
@@ -87,6 +88,11 @@ def generate_launch_description():
                 "vehicle_command_topic",
                 default_value="/fmu/in/vehicle_command",
                 description="PX4 vehicle command input topic.",
+            ),
+            DeclareLaunchArgument(
+                "vehicle_command_ack_topic",
+                default_value="/fmu/out/vehicle_command_ack",
+                description="PX4 vehicle command acknowledgement output topic.",
             ),
             DeclareLaunchArgument(
                 "current_index_topic",
@@ -374,6 +380,7 @@ def generate_launch_description():
                         "gimbal_attitude_topic": gimbal_attitude_topic,
                         "gimbal_set_attitude_topic": gimbal_set_attitude_topic,
                         "vehicle_command_topic": vehicle_command_topic,
+                        "vehicle_command_ack_topic": vehicle_command_ack_topic,
                         "target_system": ParameterValue(target_system, value_type=int),
                         "target_component": ParameterValue(target_component, value_type=int),
                         "source_system": ParameterValue(source_system, value_type=int),

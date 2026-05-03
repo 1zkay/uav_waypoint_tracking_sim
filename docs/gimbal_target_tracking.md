@@ -129,6 +129,8 @@ src/uav_waypoint_tracking/config/gimbal_tracking.yaml
 - `hold_last_command_on_loss`
 - `use_gimbal_feedback`
 - `configure_gimbal_manager`
+- `configure_retry_period_s`
+- `configure_max_attempts`
 
 配置优先级为：
 
@@ -188,11 +190,11 @@ pitch_cmd = clamp(pitch_cmd + pitch_rate * dt, min_pitch, max_pitch)
 
 最后默认通过 `/fmu/in/gimbal_manager_set_attitude` 发布 `px4_msgs/msg/GimbalManagerSetAttitude`。这对应 MAVLink gimbal manager 的高频 setpoint 路径：MAVLink 标准中 `MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW` 是低频命令，连续流式控制应使用 `GIMBAL_MANAGER_SET_PITCHYAW`；PX4 在 ROS 2 / uORB 侧用 `gimbal_manager_set_attitude` 承载等价的姿态 setpoint。节点会把内部的 `pitch/yaw` 角转换成四元数 `q` 发布，角速度字段设为 `NaN`，表示只给角度目标。
 
-节点仍会通过 `/fmu/in/vehicle_command` 发送一次 `MAV_CMD_DO_GIMBAL_MANAGER_CONFIGURE`，把当前 `source_system/source_component` 设置为 gimbal manager primary control；如需回退到旧实现，可将 `command_interface` 改为 `vehicle_command`，此时会连续发送 `MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW`。
+节点仍会通过 `/fmu/in/vehicle_command` 发送 `MAV_CMD_DO_GIMBAL_MANAGER_CONFIGURE`，把当前 `source_system/source_component` 设置为 gimbal manager primary control。节点会订阅 `/fmu/out/vehicle_command_ack`，在收到 accepted ACK 前按 `configure_retry_period_s` 周期重试，避免 PX4/gimbal 尚未准备好时一次性配置丢失。如需回退到旧实现，可将 `command_interface` 改为 `vehicle_command`，此时会连续发送 `MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW`。
 
 诊断话题 `/x500_0/gimbal_target_tracker/error` 中的 `vector.x/y` 现在分别表示 yaw/pitch 视线角误差，单位为 degree，`vector.z` 为目标置信度。
 
-`yaw_frame` 默认是 `vehicle`，节点会发送 MAVLink `GIMBAL_MANAGER_FLAGS_YAW_IN_VEHICLE_FRAME`，使 yaw 命令明确按机体系解释；如需地理系 yaw，可改为 `earth`，节点会发送 `GIMBAL_MANAGER_FLAGS_YAW_LOCK | GIMBAL_MANAGER_FLAGS_YAW_IN_EARTH_FRAME`，同时兼容当前 PX4 对 `YAW_LOCK` 的处理。
+`yaw_frame` 默认是 `vehicle`，节点在 PX4 ROS 2 / uORB 路径上发送 `flags=0`，使 yaw 按机体系解释；如需地理系 yaw，可改为 `earth`，节点会发送 `GIMBAL_MANAGER_FLAGS_YAW_LOCK`。当前 PX4 的 `gimbal_manager_set_attitude` 处理逻辑实际只用 `YAW_LOCK` 区分 yaw body frame 与 earth frame。
 
 节点默认订阅 `/fmu/out/gimbal_device_attitude_status`，并在反馈消息的 yaw frame 与当前 `yaw_frame` 配置一致时，用云台反馈四元数同步内部 `pitch/yaw` 状态；这样控制积分从实际云台角度继续，而不是只依赖上一次发送的命令。当前 Gazebo 云台反馈按 vehicle frame 发布，因此默认 `yaw_frame: vehicle` 与反馈一致。如果需要回退到纯命令积分，可将 `use_gimbal_feedback` 设为 `false`。
 
@@ -200,7 +202,7 @@ pitch_cmd = clamp(pitch_cmd + pitch_rate * dt, min_pitch, max_pitch)
 
 ## 目标锁定
 
-`lock_target_track` 控制是否锁定同一个 `Detection2D.id`。当前 YAML 配置为 `false`，即每帧跟踪筛选后的最高置信度目标；如果改为 `true`，节点会在通过 `target_class_id`、`min_score` 筛选后锁定一个 `track_id`：
+`lock_target_track` 控制是否锁定同一个 `Detection2D.id`。当前 YAML 配置为 `true`，节点会在通过 `target_class_id`、`min_score` 筛选后锁定一个 `track_id`，降低多目标场景中的切换概率；如果 ByteTrack 临时丢失并重新分配 ID，节点会优先重锁到离上一次目标图像位置最近的候选。如果改为 `false`，则每帧跟踪筛选后的最高置信度目标：
 
 ```text
 target_track_id 非空：只跟踪指定 track id
@@ -264,8 +266,9 @@ ros2 topic echo /x500_0/gimbal_target_tracker/tracking_active --once
 2. 再打开 `ENABLE_GIMBAL_TRACKING=true`，观察云台是否能把目标拉回画面中心。
 3. 如果目标向右偏，云台也继续向右导致更偏，反转 `gimbal_tracking.yaml` 中的 `yaw_error_sign`。
 4. 如果目标向上偏，云台也继续向上导致更偏，反转 `pitch_error_sign`。
-5. 目标在画面中振荡时，降低 `yaw_rate_gain_s_inv` 和 `pitch_rate_gain_s_inv`。
-6. 目标移动快但云台跟不上时，适当提高增益和最大角速度。
+5. 如果画面里有两个以上目标且跟踪目标来回切换，优先指定 `target_track_id`，或提高 YOLO/ByteTrack 的跟踪稳定性。
+6. 目标在画面中振荡时，降低 `yaw_rate_gain_s_inv` 和 `pitch_rate_gain_s_inv`。
+7. 目标移动快但云台跟不上时，适当提高增益和最大角速度。
 
 ## 局限性
 
