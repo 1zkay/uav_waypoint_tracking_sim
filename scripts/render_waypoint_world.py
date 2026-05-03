@@ -30,6 +30,11 @@ def main() -> None:
     parser.add_argument("--waypoints", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--wind-config", type=Path)
+    parser.add_argument(
+        "--include-visuals",
+        action="store_true",
+        help="Insert waypoint, boundary, reference, and wind direction visuals.",
+    )
     args = parser.parse_args()
 
     config = load_waypoint_config(args.waypoints)
@@ -45,10 +50,11 @@ def main() -> None:
 
     remove_generated_models(world)
     configure_wind(world, wind_config)
-    insert_index = find_insert_index(world)
-    for model in make_generated_models(waypoints, acceptance_radius, wind_config):
-        world.insert(insert_index, model)
-        insert_index += 1
+    if args.include_visuals:
+        insert_index = find_insert_index(world)
+        for model in make_generated_models(waypoints, acceptance_radius, wind_config):
+            world.insert(insert_index, model)
+            insert_index += 1
 
     ET.indent(tree, space="  ")
     args.output.parent.mkdir(parents=True, exist_ok=True)

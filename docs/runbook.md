@@ -34,7 +34,7 @@ ros2 topic echo /target/waypoint_tracker/current_waypoint_index --once
 ```
 
 RViz 使用 `map` 作为固定坐标系。`waypoint_visualizer` 会把 PX4 本地 NED 航点转换成 ROS ENU，
-所以 RViz 中高度向上。Gazebo 世界坐标也是 ENU，3D 航点标记使用
+所以 RViz 中高度向上。Gazebo 世界坐标也是 ENU，临时启用的 3D 航点标记使用
 `Gazebo x=east=NED y`、`Gazebo y=north=NED x`、`Gazebo z=up=-NED z`。
 
 `x500_0` 是带云台相机的主机，Gazebo 模型名仍保持 `x500_0`，底层模型来自 PX4 官方
@@ -52,9 +52,9 @@ Gazebo 静态标记不需要手工改 world。主机航点改
 ./scripts/start_target_waypoint_tracking.sh
 ```
 
-`start_px4_gazebo.sh` 会调用 `scripts/render_waypoint_world.py`，把 YAML 航点转换成
+`start_px4_gazebo.sh` 会调用 `scripts/render_waypoint_world.py`，把基础 world 和风场配置转换成
 `build/generated/worlds/waypoint_tracking.sdf`，再同步到
-`/home/zk/PX4-Autopilot/Tools/simulation/gz/worlds/waypoint_tracking.sdf`。
+`/home/zk/PX4-Autopilot/Tools/simulation/gz/worlds/waypoint_tracking.sdf`。Gazebo 静态航点/方块标记默认关闭；需要调试空间位置时用 `SHOW_WAYPOINT_VISUALS=true ./scripts/start_px4_gazebo.sh` 打开。
 如果使用自定义 YAML，PX4/Gazebo 终端和 ROS 终端都传入同一个变量：
 
 ```bash

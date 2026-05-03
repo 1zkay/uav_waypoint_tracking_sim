@@ -86,7 +86,7 @@ cd /home/zk/uav_waypoint_tracking_sim
 
 只改主机航点时修改 `waypoints.yaml`；只改目标机轨迹时修改 `target_waypoints.yaml`。
 `scripts/start_px4_gazebo.sh` 会在启动前自动根据主机 YAML
-生成 Gazebo 航点标记 world，并同步到 PX4 的 worlds 目录；`scripts/start_waypoint_tracking.sh`
+生成 Gazebo world，并同步到 PX4 的 worlds 目录；`scripts/start_waypoint_tracking.sh`
 也会默认把同一个主机 YAML 传给控制节点和 RViz 可视化节点。目标机启动脚本默认使用
 `target_waypoints.yaml`，当前轨迹是在 `x-z` 垂直平面内的椭圆。
 
@@ -105,8 +105,8 @@ Gazebo 如果暂停，点击左下角播放按钮。航点仿真默认使用
 `PX4_GZ_MODEL_NAME=x500_0` 和 `PX4_GZ_MODEL_NAME=x500_1` 连接，因此可以只在本仓库内启用
 受风模型和真值 odometry，不修改 PX4 原始 `x500_base` / `x500_gimbal`。
 `default1` 保留给 `/home/zk/gimbal_track` 使用，其中仍包含 `x500_target_moving`。
-Gazebo 世界中包含航点柱、设定高度航线、起降垫、边界和少量参照物；RViz 使用 ROS ENU
-`map` 坐标显示相同航点，其中 PX4 NED 会自动转换为 `x=east, y=north, z=up`。
+Gazebo 世界默认不插入航点柱、边界、参照方块或风向箭头，以减少视觉识别干扰；RViz 使用 ROS ENU
+`map` 坐标显示航点，其中 PX4 NED 会自动转换为 `x=east, y=north, z=up`。如果需要临时查看 Gazebo 静态航点标记，可用 `SHOW_WAYPOINT_VISUALS=true ./scripts/start_px4_gazebo.sh` 启动。
 Gazebo 世界坐标同样按 ENU 显示：`Gazebo x=east`、`Gazebo y=north`、`Gazebo z=up`。
 
 ## 云台相机、YOLO + BoT-SORT 跟踪与云台闭环
@@ -317,14 +317,14 @@ ros2 topic echo /fmu/out/gimbal_device_attitude_status --once
 ## World 文件说明
 
 `/home/zk/PX4-Autopilot/Tools/simulation/gz/worlds/waypoint_tracking.sdf`
-需要只包含基础世界、预加载的 `x500_0` / `x500_1`、由 YAML 自动生成的静态航点标记和可选风场，
+需要只包含基础世界、预加载的 `x500_0` / `x500_1` 和可选风场，
 并加载 `AirSpeed`、`NavSat`、`Magnetometer`、`WindEffects` 等系统插件。该世界还必须包含
 `spherical_coordinates`，否则 Gazebo 的 NavSat/GNSS 和磁场基准会异常，PX4 可能出现
 安全检查失败或起飞后高度估计发散。修改世界文件后必须重启 PX4/Gazebo。
 
 本仓库的 `px4_overlays/worlds/waypoint_tracking.sdf` 是基础世界，只放 Gazebo/PX4
 必须的物理、传感器、地面、云台主机 `x500_0`、普通目标机 `x500_1` 和地理基准；
-航点柱、接受半径、规划航线、起降垫、边界和初始风向箭头由
-`scripts/render_waypoint_world.py` 自动渲染到
+航点柱、接受半径、规划航线、起降垫、边界和初始风向箭头只在传入 `SHOW_WAYPOINT_VISUALS=true` 时由
+`scripts/render_waypoint_world.py` 渲染到
 `build/generated/worlds/waypoint_tracking.sdf`，再由 `scripts/start_px4_gazebo.sh`
 同步到 PX4 的 Gazebo worlds 目录。
