@@ -4,6 +4,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
+from enum import Enum
 
 import rclpy
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
@@ -50,6 +51,19 @@ class CameraIntrinsics:
     width: float
     height: float
     source: str
+
+
+class TrackingState(str, Enum):
+    """High-level gimbal target tracker state."""
+
+    INITIALIZING = "initializing"
+    TRACKING = "tracking"
+    TRACKING_GIMBAL_LAG = "tracking_gimbal_lag"
+    HOLD = "hold"
+    LOCAL_SEARCH = "local_search"
+    GLOBAL_SEARCH = "global_search"
+    CAMERA_FAULT = "camera_fault"
+    VISION_STREAM_LOST = "vision_stream_lost"
 
 
 class GimbalTargetTracker(Node):
@@ -339,7 +353,7 @@ class GimbalTargetTracker(Node):
         self.target_missing_since_s: float | None = None
         self.last_update_time_s: float | None = None
         self.last_gimbal_feedback_time_s: float | None = None
-        self.tracking_state = "initializing"
+        self.tracking_state = TrackingState.INITIALIZING
         self.search_start_time_s: float | None = None
         self.search_anchor_yaw_deg = self.cmd_yaw_deg
         self.search_anchor_pitch_deg = self.cmd_pitch_deg
@@ -675,7 +689,7 @@ class GimbalTargetTracker(Node):
             self._handle_missing_target(now_s, dt_s)
             return
 
-        self.tracking_state = "tracking"
+        self.tracking_state = TrackingState.TRACKING
         self._reset_search()
 
         yaw_error_deg, pitch_error_deg = self._camera_angle_error_deg(
@@ -687,7 +701,7 @@ class GimbalTargetTracker(Node):
         yaw_control_error_deg = self.yaw_error_sign * yaw_error_deg
         pitch_control_error_deg = self.pitch_error_sign * pitch_error_deg
         if self._tracking_gimbal_lag_too_large(now_s):
-            self.tracking_state = "tracking_gimbal_lag"
+            self.tracking_state = TrackingState.TRACKING_GIMBAL_LAG
             self._reset_error_integrals()
             now_us = self._now_us()
             self._publish_gimbal_configure_if_needed(now_us)
@@ -748,11 +762,11 @@ class GimbalTargetTracker(Node):
         self._mark_target_missing_if_needed(now_s)
 
         if not self._has_recent_camera_image(now_s):
-            self.tracking_state = "camera_fault"
+            self.tracking_state = TrackingState.CAMERA_FAULT
             self._reset_search()
             self._publish_hold_setpoint_if_needed(now_us)
         elif not self._has_recent_detections_stream(now_s):
-            self.tracking_state = "vision_stream_lost"
+            self.tracking_state = TrackingState.VISION_STREAM_LOST
             self._reset_search()
             self._publish_hold_setpoint_if_needed(now_us)
         elif self._should_search_for_target(now_s):
@@ -763,7 +777,7 @@ class GimbalTargetTracker(Node):
                 self.cmd_yaw_deg,
             )
         else:
-            self.tracking_state = "hold"
+            self.tracking_state = TrackingState.HOLD
             self._reset_search()
             self._publish_hold_setpoint_if_needed(now_us)
 
@@ -844,7 +858,11 @@ class GimbalTargetTracker(Node):
         next_search_mode = "local" if local_search else "global"
         if next_search_mode != self.search_mode:
             self._set_search_mode(next_search_mode)
-        self.tracking_state = f"{self.search_mode}_search"
+        self.tracking_state = (
+            TrackingState.LOCAL_SEARCH
+            if self.search_mode == "local"
+            else TrackingState.GLOBAL_SEARCH
+        )
 
         if local_search:
             yaw_min_deg, yaw_max_deg = self._local_search_yaw_limits(
@@ -1221,16 +1239,19 @@ class GimbalTargetTracker(Node):
         status = DiagnosticStatus()
         status.name = "gimbal_target_tracker"
         status.hardware_id = f"gimbal_device_id={int(self.gimbal_device_id)}"
-        if self.tracking_state == "camera_fault":
+        if self.tracking_state is TrackingState.CAMERA_FAULT:
             status.level = DiagnosticStatus.ERROR
             status.message = "camera image stream lost"
-        elif self.tracking_state == "vision_stream_lost":
+        elif self.tracking_state is TrackingState.VISION_STREAM_LOST:
             status.level = DiagnosticStatus.WARN
             status.message = "detection stream lost"
-        elif self.tracking_state in {"local_search", "global_search"}:
+        elif self.tracking_state in {
+            TrackingState.LOCAL_SEARCH,
+            TrackingState.GLOBAL_SEARCH,
+        }:
             status.level = DiagnosticStatus.WARN
-            status.message = self.tracking_state
-        elif self.tracking_state == "tracking_gimbal_lag":
+            status.message = self.tracking_state.value
+        elif self.tracking_state is TrackingState.TRACKING_GIMBAL_LAG:
             status.level = DiagnosticStatus.WARN
             status.message = "tracking paused while gimbal catches up"
         elif not self.use_gimbal_feedback:
@@ -1247,7 +1268,7 @@ class GimbalTargetTracker(Node):
             status.message = "gimbal feedback active"
 
         status.values = [
-            self._diagnostic_value("state", self.tracking_state),
+            self._diagnostic_value("state", self.tracking_state.value),
             self._diagnostic_value("tracking_active", active),
             self._diagnostic_value("cmd_yaw_deg", self.cmd_yaw_deg),
             self._diagnostic_value("cmd_pitch_deg", self.cmd_pitch_deg),
