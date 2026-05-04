@@ -26,8 +26,8 @@ gimbal_target_tracker:
     fallback_image_width: 1280.0
     fallback_image_height: 720.0
     deadband_angle_deg: 0.5
-    yaw_kp_s_inv: 0.9
-    pitch_kp_s_inv: 0.8
+    yaw_kp_s_inv: 1.0
+    pitch_kp_s_inv: 1.0
     yaw_ki_s_inv2: 0.0
     pitch_ki_s_inv2: 0.0
     yaw_feedforward_deg_s: 0.0
@@ -71,7 +71,7 @@ gimbal_target_tracker:
     global_search_pitch_levels_deg: [0.0, -20.0, 20.0, -40.0, 30.0, -60.0, -80.0]
     # During visual tracking, freeze cmd integration if cmd-actual lag stays
     # above this threshold long enough. 0 disables the tracking watchdog.
-    max_tracking_cmd_actual_error_deg: 30.0
+    max_tracking_cmd_actual_error_deg: 60.0
     tracking_cmd_actual_error_timeout_s: 0.5
     # During search, wait before advancing the scan if the gimbal has not
     # caught up to the current command. 0 disables this search watchdog.
