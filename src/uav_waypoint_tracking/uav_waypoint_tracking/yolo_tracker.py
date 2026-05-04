@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import threading
+import time
 
 import rclpy
 from cv_bridge import CvBridge, CvBridgeError
@@ -46,6 +48,7 @@ class YoloTracker(Node):
         self.declare_parameter("iou_threshold", 0.45)
         self.declare_parameter("image_size", 960)
         self.declare_parameter("max_detections", 100)
+        self.declare_parameter("max_inference_hz", 15.0)
         self.declare_parameter("classes", "")
         self.declare_parameter("device", "")
         self.declare_parameter("publish_annotated_image", True)
@@ -61,6 +64,10 @@ class YoloTracker(Node):
         self.iou_threshold = float(self.get_parameter("iou_threshold").value)
         self.image_size = int(self.get_parameter("image_size").value)
         self.max_detections = int(self.get_parameter("max_detections").value)
+        self.max_inference_hz = max(
+            0.0,
+            float(self.get_parameter("max_inference_hz").value),
+        )
         self.classes = parse_classes(str(self.get_parameter("classes").value))
         self.device = str(self.get_parameter("device").value).strip()
         self.publish_annotated_image = bool(self.get_parameter("publish_annotated_image").value)
@@ -101,15 +108,77 @@ class YoloTracker(Node):
             qos_profile_sensor_data,
         )
 
+        self._frame_condition = threading.Condition()
+        self._latest_image_msg: Image | None = None
+        self._latest_image_sequence = 0
+        self._processed_image_sequence = 0
+        self._stop_event = threading.Event()
+        self._inference_thread = threading.Thread(
+            target=self._inference_loop,
+            name="yolo_tracker_inference",
+            daemon=True,
+        )
+        self._inference_thread.start()
+
         class_filter = "all classes" if self.classes is None else f"classes={self.classes}"
+        inference_limit = (
+            "unlimited"
+            if self.max_inference_hz <= 0.0
+            else f"{self.max_inference_hz:.1f} Hz"
+        )
         self.get_logger().info(
             "YOLO tracker ready: "
             f"image={self.image_topic}, tracks={self.tracks_topic}, "
             f"annotated={self.annotated_image_topic}, weights={self.weights_path}, "
-            f"tracker={self.tracker_config or 'ultralytics default'}, {class_filter}"
+            f"tracker={self.tracker_config or 'ultralytics default'}, {class_filter}, "
+            f"latest-frame inference, max_inference={inference_limit}"
         )
 
     def _image_callback(self, msg: Image) -> None:
+        with self._frame_condition:
+            self._latest_image_msg = msg
+            self._latest_image_sequence += 1
+            self._frame_condition.notify()
+
+    def _inference_loop(self) -> None:
+        last_inference_start_s = 0.0
+
+        while not self._stop_event.is_set():
+            with self._frame_condition:
+                while (
+                    not self._stop_event.is_set()
+                    and self._latest_image_sequence == self._processed_image_sequence
+                ):
+                    self._frame_condition.wait(timeout=0.1)
+
+                if self._stop_event.is_set():
+                    break
+
+                min_period_s = self._min_inference_period_s()
+                wait_s = last_inference_start_s + min_period_s - time.monotonic()
+                if wait_s > 0.0:
+                    self._frame_condition.wait(timeout=wait_s)
+                    continue
+
+                image_msg = self._latest_image_msg
+                self._processed_image_sequence = self._latest_image_sequence
+
+            if image_msg is None:
+                continue
+
+            now_s = time.monotonic()
+            last_inference_start_s = now_s
+            try:
+                self._process_image(image_msg)
+            except Exception as exc:  # noqa: BLE001 - keep the worker alive after inference errors.
+                self.get_logger().error(f"YOLO inference failed: {exc}")
+
+    def _min_inference_period_s(self) -> float:
+        if self.max_inference_hz <= 0.0:
+            return 0.0
+        return 1.0 / self.max_inference_hz
+
+    def _process_image(self, msg: Image) -> None:
         try:
             frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
         except CvBridgeError as exc:
@@ -133,6 +202,8 @@ class YoloTracker(Node):
             track_kwargs["device"] = self.device
 
         results = self.model.track(**track_kwargs)
+        if self._stop_event.is_set() or not results:
+            return
         result = results[0]
 
         tracks = self._extract_tracks(result)
@@ -144,6 +215,14 @@ class YoloTracker(Node):
             annotated_msg = self.bridge.cv2_to_imgmsg(annotated, encoding="bgr8")
             annotated_msg.header = msg.header
             self.annotated_image_pub.publish(annotated_msg)
+
+    def destroy_node(self) -> bool:
+        self._stop_event.set()
+        with self._frame_condition:
+            self._frame_condition.notify_all()
+        if self._inference_thread.is_alive():
+            self._inference_thread.join(timeout=5.0)
+        return super().destroy_node()
 
     def _extract_tracks(self, result) -> list[YoloTrack]:
         tracks: list[YoloTrack] = []

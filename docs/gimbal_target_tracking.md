@@ -105,8 +105,11 @@ src/uav_waypoint_tracking/config/gimbal_tracking.yaml
 - `iou_threshold`
 - `image_size`
 - `max_detections`
+- `max_inference_hz`
 - `classes`
 - `device`
+
+`yolo_tracker` 使用 latest-frame 推理模式：图像回调只缓存最新帧，后台推理线程空闲后取最新帧处理，旧帧会被覆盖而不是排队。`max_inference_hz` 用于限制最大推理频率。
 
 `gimbal_tracking.yaml` 管理云台视觉伺服参数，例如：
 
