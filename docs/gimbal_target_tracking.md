@@ -144,6 +144,8 @@ src/uav_waypoint_tracking/config/gimbal_tracking.yaml
 - `search_max_yaw_amplitude_deg`
 - `local_search_pitch_bands_deg`
 - `global_search_pitch_levels_deg`
+- `max_tracking_cmd_actual_error_deg`
+- `tracking_cmd_actual_error_timeout_s`
 - `max_search_cmd_actual_error_deg`
 - `yaw_frame`
 - `command_interface`
@@ -229,9 +231,11 @@ cmd_pitch = clamp(cmd_pitch + pitch_rate * dt, min_pitch, max_pitch)
 
 `yaw_frame` 默认是 `vehicle`，节点在 PX4 ROS 2 / uORB 路径上发送 `flags=0`，使 yaw 按机体系解释；如需地理系 yaw，可改为 `earth`，节点会发送 `GIMBAL_MANAGER_FLAGS_YAW_LOCK`。当前 PX4 的 `gimbal_manager_set_attitude` 处理逻辑实际只用 `YAW_LOCK` 区分 yaw body frame 与 earth frame。
 
-节点默认订阅 `/fmu/out/gimbal_device_attitude_status`，并在反馈消息的 yaw frame 与当前 `yaw_frame` 配置一致时，把反馈四元数解析到 `actual_yaw/actual_pitch`。这两个反馈量不会在控制过程中覆盖 `cmd_yaw/cmd_pitch`，因此云台指令始终由控制器自身连续积分生成。启动阶段如果 `initialize_command_from_feedback=true` 且节点还没有发送过云台命令，第一次有效反馈会用来初始化 `cmd_yaw/cmd_pitch`，避免默认 `initial_*` 与真实云台角不一致造成首次 setpoint 跳变。当前 Gazebo 云台反馈按 vehicle frame 发布，因此默认 `yaw_frame: vehicle` 与反馈一致；如果不需要记录反馈，可将 `use_gimbal_feedback` 设为 `false`。
+节点默认订阅 `/fmu/out/gimbal_device_attitude_status`，并在反馈消息的 yaw frame 与当前 `yaw_frame` 配置一致时，把反馈四元数解析到 `actual_yaw/actual_pitch`。这两个反馈量不会在正常控制过程中覆盖 `cmd_yaw/cmd_pitch`，因此云台指令始终由控制器自身连续积分生成。启动阶段如果 `initialize_command_from_feedback=true` 且节点还没有发送过云台命令，第一次有效反馈会用来初始化 `cmd_yaw/cmd_pitch`，避免默认 `initial_*` 与真实云台角不一致造成首次 setpoint 跳变。当前 Gazebo 云台反馈按 vehicle frame 发布，因此默认 `yaw_frame: vehicle` 与反馈一致；如果不需要记录反馈，可将 `use_gimbal_feedback` 设为 `false`。
 
-诊断话题 `/x500_0/gimbal_target_tracker/state` 使用 `diagnostic_msgs/DiagnosticArray` 发布控制状态，包含状态机状态、`cmd_yaw/cmd_pitch`、`actual_yaw/actual_pitch`、`cmd_actual_*_error`、误差积分、图像/检测/反馈年龄、搜索中心、搜索 pitch band 和是否已用反馈初始化命令。
+tracking 状态下 `actual_yaw/actual_pitch` 作为 watchdog 输入：如果 `cmd-actual` 最大偏差持续超过 `max_tracking_cmd_actual_error_deg` 且超过 `tracking_cmd_actual_error_timeout_s`，节点进入 `tracking_gimbal_lag`，暂停视觉误差积分和 `cmd` 更新，只继续发布当前 setpoint，等待云台真实姿态追上。这样可以防止视觉方向错误、反馈异常或云台执行滞后时 `cmd_yaw/cmd_pitch` 继续漂移。`max_tracking_cmd_actual_error_deg: 0` 可关闭该保护。
+
+诊断话题 `/x500_0/gimbal_target_tracker/state` 使用 `diagnostic_msgs/DiagnosticArray` 发布控制状态，包含状态机状态、`cmd_yaw/cmd_pitch`、`actual_yaw/actual_pitch`、`cmd_actual_*_error`、`cmd_actual_max_error_deg`、watchdog 状态、误差积分、图像/检测/反馈年龄、搜索中心、搜索 pitch band 和是否已用反馈初始化命令。
 
 ## 目标丢失搜索
 
@@ -249,7 +253,7 @@ global_search:       局部扫描超过 local_search_duration_s 后，在完整 
 
 如果图像和检测流都正常但没有目标，节点先短时保持最后 `cmd_yaw/cmd_pitch`。超过 `search_after_lost_s` 后进入搜索：`local_search` 以当前新鲜 `actual_yaw/actual_pitch` 为中心，没有新鲜反馈时以 `cmd_yaw/cmd_pitch` 为中心；yaw 按 `search_yaw_rate_deg_s` 左右扫描，扫描幅度从 `search_initial_yaw_amplitude_deg` 逐步扩大到 `search_max_yaw_amplitude_deg`，pitch 按 `local_search_pitch_bands_deg` 做相对丢失角的分层切换。局部搜索超时后进入 `global_search`，在 `min_yaw_deg/max_yaw_deg` 范围内继续蛇形扫描，但 pitch 改用 `global_search_pitch_levels_deg` 中的绝对俯仰层，默认从水平 `0 deg` 开始。这样全局搜索不会因为丢失时云台已经指向错误 pitch 而一直围绕错误角度扫描。一旦重新收到符合筛选条件的目标，节点重置搜索状态并回到视觉伺服闭环。
 
-搜索时 `actual_yaw/actual_pitch` 仍不覆盖运行中的 `cmd_yaw/cmd_pitch`。它们用于选择搜索中心和监控云台是否跟得上搜索命令。`max_search_cmd_actual_error_deg` 大于 0 时，如果 `cmd-actual` 超过该阈值，搜索会暂停推进并等待云台跟上；默认值为 0，表示不因 `cmd-actual` 偏差暂停搜索，因为 PX4/Gazebo 反馈可能存在固定角度偏移。
+搜索时 `actual_yaw/actual_pitch` 仍不覆盖运行中的 `cmd_yaw/cmd_pitch`。它们用于选择搜索中心和监控云台是否跟得上搜索命令。`max_search_cmd_actual_error_deg` 大于 0 时，如果 `cmd-actual` 超过该阈值，搜索会暂停推进并等待云台跟上；当前默认 `30 deg`，给 PX4/Gazebo 反馈可能存在的小固定偏差留出裕度。设为 `0` 可关闭搜索阶段 watchdog。
 
 注意：本机 PX4 的 `/home/zk/PX4-Autopilot/src/modules/uxrce_dds_client/dds_topics.yaml` 已加入 `/fmu/in/gimbal_manager_set_attitude`。修改该文件后需要重新启动 `scripts/start_px4_gazebo.sh`，让 PX4 重新构建并生成 XRCE-DDS topic 支持。
 

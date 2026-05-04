@@ -182,7 +182,7 @@ source install/setup.bash
 视觉链路常用配置文件：
 
 - `src/uav_waypoint_tracking/config/yolo_tracking.yaml`: YOLO/BoT-SORT 参数，例如 `tracker_config`、`confidence_threshold`、`iou_threshold`、`image_size`、`max_inference_hz`、`classes`、`device`。
-- `src/uav_waypoint_tracking/config/gimbal_tracking.yaml`: 云台视觉伺服参数，例如 `target_class_id`、`target_track_id`、`lock_target_track`、`min_score`、`fallback_fx_px`、`fallback_fy_px`、`deadband_angle_deg`、`yaw_kp_s_inv`、`pitch_kp_s_inv`、`yaw_ki_s_inv2`、`pitch_ki_s_inv2`、`search_enabled`、`search_yaw_rate_deg_s`、`yaw_frame`、`command_interface`、`use_gimbal_feedback`、`initialize_command_from_feedback`。
+- `src/uav_waypoint_tracking/config/gimbal_tracking.yaml`: 云台视觉伺服参数，例如 `target_class_id`、`target_track_id`、`lock_target_track`、`min_score`、`fallback_fx_px`、`fallback_fy_px`、`deadband_angle_deg`、`yaw_kp_s_inv`、`pitch_kp_s_inv`、`yaw_ki_s_inv2`、`pitch_ki_s_inv2`、`search_enabled`、`search_yaw_rate_deg_s`、`max_tracking_cmd_actual_error_deg`、`yaw_frame`、`command_interface`、`use_gimbal_feedback`、`initialize_command_from_feedback`。
 
 ## 风场
 

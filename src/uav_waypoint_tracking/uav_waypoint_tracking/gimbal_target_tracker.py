@@ -153,7 +153,9 @@ class GimbalTargetTracker(Node):
             "global_search_pitch_levels_deg",
             [0.0, -20.0, 20.0, -40.0, 30.0, -60.0, -80.0],
         )
-        self.declare_parameter("max_search_cmd_actual_error_deg", 0.0)
+        self.declare_parameter("max_tracking_cmd_actual_error_deg", 30.0)
+        self.declare_parameter("tracking_cmd_actual_error_timeout_s", 0.5)
+        self.declare_parameter("max_search_cmd_actual_error_deg", 30.0)
         self.declare_parameter("use_gimbal_feedback", True)
         self.declare_parameter("initialize_command_from_feedback", True)
         self.declare_parameter("configure_gimbal_manager", True)
@@ -298,6 +300,16 @@ class GimbalTargetTracker(Node):
             "global_search_pitch_levels_deg",
             [0.0],
         )
+        self.max_tracking_cmd_actual_error_deg = max(
+            0.0,
+            float(self.get_parameter("max_tracking_cmd_actual_error_deg").value),
+        )
+        self.tracking_cmd_actual_error_timeout_s = max(
+            0.0,
+            float(
+                self.get_parameter("tracking_cmd_actual_error_timeout_s").value
+            ),
+        )
         self.max_search_cmd_actual_error_deg = max(
             0.0,
             float(self.get_parameter("max_search_cmd_actual_error_deg").value),
@@ -336,6 +348,8 @@ class GimbalTargetTracker(Node):
         self.search_pitch_target_deg = self.cmd_pitch_deg
         self.search_mode = "none"
         self.search_waiting_for_gimbal = False
+        self.tracking_waiting_for_gimbal = False
+        self.tracking_cmd_actual_error_since_s: float | None = None
         self.has_sent_gimbal_command = False
         self.command_initialized_from_feedback = False
         self.has_sent_gimbal_configure = False
@@ -672,6 +686,25 @@ class GimbalTargetTracker(Node):
 
         yaw_control_error_deg = self.yaw_error_sign * yaw_error_deg
         pitch_control_error_deg = self.pitch_error_sign * pitch_error_deg
+        if self._tracking_gimbal_lag_too_large(now_s):
+            self.tracking_state = "tracking_gimbal_lag"
+            self._reset_error_integrals()
+            now_us = self._now_us()
+            self._publish_gimbal_configure_if_needed(now_us)
+            self._publish_error(
+                now_us,
+                yaw_error_deg,
+                pitch_error_deg,
+                self.last_detection.score,
+            )
+            self._publish_gimbal_setpoint(
+                now_us,
+                self.cmd_pitch_deg,
+                self.cmd_yaw_deg,
+            )
+            self._publish_gimbal_state(now_us, active)
+            return
+
         self._update_error_integrals(
             yaw_control_error_deg,
             pitch_control_error_deg,
@@ -711,6 +744,7 @@ class GimbalTargetTracker(Node):
         now_us = self._now_us()
         self._publish_gimbal_configure_if_needed(now_us)
         self._reset_error_integrals()
+        self._reset_tracking_gimbal_lag()
         self._mark_target_missing_if_needed(now_s)
 
         if not self._has_recent_camera_image(now_s):
@@ -939,26 +973,77 @@ class GimbalTargetTracker(Node):
             return self.global_search_pitch_levels_deg
         return self.local_search_pitch_bands_deg
 
+    def _tracking_gimbal_lag_too_large(self, now_s: float) -> bool:
+        if self.max_tracking_cmd_actual_error_deg <= 0.0:
+            self._reset_tracking_gimbal_lag()
+            return False
+        if not self._has_fresh_gimbal_feedback(now_s):
+            self._reset_tracking_gimbal_lag()
+            return False
+
+        max_error_deg = self._cmd_actual_max_error_deg()
+        if (
+            max_error_deg is None
+            or max_error_deg <= self.max_tracking_cmd_actual_error_deg
+        ):
+            self._reset_tracking_gimbal_lag()
+            return False
+
+        if self.tracking_cmd_actual_error_since_s is None:
+            self.tracking_cmd_actual_error_since_s = now_s
+
+        self.tracking_waiting_for_gimbal = (
+            now_s - self.tracking_cmd_actual_error_since_s
+            >= self.tracking_cmd_actual_error_timeout_s
+        )
+        return self.tracking_waiting_for_gimbal
+
+    def _reset_tracking_gimbal_lag(self) -> None:
+        self.tracking_waiting_for_gimbal = False
+        self.tracking_cmd_actual_error_since_s = None
+
     def _search_gimbal_lag_too_large(self, now_s: float) -> bool:
         if self.max_search_cmd_actual_error_deg <= 0.0:
             return False
         if not self._has_fresh_gimbal_feedback(now_s):
             return False
-        if self.actual_yaw_deg is None or self.actual_pitch_deg is None:
-            return False
 
-        yaw_error_deg = abs(self.cmd_yaw_deg - self.actual_yaw_deg)
-        pitch_error_deg = abs(self.cmd_pitch_deg - self.actual_pitch_deg)
-        return (
-            max(yaw_error_deg, pitch_error_deg)
-            > self.max_search_cmd_actual_error_deg
-        )
+        max_error_deg = self._cmd_actual_max_error_deg()
+        if max_error_deg is None:
+            return False
+        return max_error_deg > self.max_search_cmd_actual_error_deg
 
     def _has_fresh_gimbal_feedback(self, now_s: float) -> bool:
         return (
             self.last_gimbal_feedback_time_s is not None
             and now_s - self.last_gimbal_feedback_time_s <= 1.0
         )
+
+    def _cmd_actual_error_deg(
+        self,
+    ) -> tuple[float | None, float | None]:
+        yaw_error_deg = (
+            None
+            if self.actual_yaw_deg is None
+            else angle_delta_deg(self.cmd_yaw_deg, self.actual_yaw_deg)
+        )
+        pitch_error_deg = (
+            None
+            if self.actual_pitch_deg is None
+            else self.cmd_pitch_deg - self.actual_pitch_deg
+        )
+        return yaw_error_deg, pitch_error_deg
+
+    def _cmd_actual_max_error_deg(self) -> float | None:
+        yaw_error_deg, pitch_error_deg = self._cmd_actual_error_deg()
+        errors = [
+            abs(error_deg)
+            for error_deg in (yaw_error_deg, pitch_error_deg)
+            if error_deg is not None
+        ]
+        if not errors:
+            return None
+        return max(errors)
 
     def _update_error_integrals(
         self,
@@ -1119,16 +1204,15 @@ class GimbalTargetTracker(Node):
             if self.search_start_time_s is None
             else max(0.0, now_s - self.search_start_time_s)
         )
-        cmd_actual_yaw_error_deg = (
+        tracking_cmd_actual_error_duration_s = (
             None
-            if self.actual_yaw_deg is None
-            else self.cmd_yaw_deg - self.actual_yaw_deg
+            if self.tracking_cmd_actual_error_since_s is None
+            else max(0.0, now_s - self.tracking_cmd_actual_error_since_s)
         )
-        cmd_actual_pitch_error_deg = (
-            None
-            if self.actual_pitch_deg is None
-            else self.cmd_pitch_deg - self.actual_pitch_deg
+        cmd_actual_yaw_error_deg, cmd_actual_pitch_error_deg = (
+            self._cmd_actual_error_deg()
         )
+        cmd_actual_max_error_deg = self._cmd_actual_max_error_deg()
 
         msg = DiagnosticArray()
         msg.header.stamp.sec = int(now_us // 1_000_000)
@@ -1146,6 +1230,9 @@ class GimbalTargetTracker(Node):
         elif self.tracking_state in {"local_search", "global_search"}:
             status.level = DiagnosticStatus.WARN
             status.message = self.tracking_state
+        elif self.tracking_state == "tracking_gimbal_lag":
+            status.level = DiagnosticStatus.WARN
+            status.message = "tracking paused while gimbal catches up"
         elif not self.use_gimbal_feedback:
             status.level = DiagnosticStatus.OK
             status.message = "gimbal feedback disabled"
@@ -1173,6 +1260,18 @@ class GimbalTargetTracker(Node):
             self._diagnostic_value(
                 "cmd_actual_pitch_error_deg",
                 cmd_actual_pitch_error_deg,
+            ),
+            self._diagnostic_value(
+                "cmd_actual_max_error_deg",
+                cmd_actual_max_error_deg,
+            ),
+            self._diagnostic_value(
+                "tracking_waiting_for_gimbal",
+                self.tracking_waiting_for_gimbal,
+            ),
+            self._diagnostic_value(
+                "tracking_cmd_actual_error_duration_s",
+                tracking_cmd_actual_error_duration_s,
             ),
             self._diagnostic_value(
                 "yaw_error_integral_deg_s",
@@ -1381,6 +1480,10 @@ def move_toward(value: float, target: float, max_step: float) -> float:
     if value > target:
         return max(value - max_step, target)
     return value
+
+
+def angle_delta_deg(value: float, reference: float) -> float:
+    return (value - reference + 180.0) % 360.0 - 180.0
 
 
 def squared_image_distance(a: SelectedDetection, b: SelectedDetection) -> float:

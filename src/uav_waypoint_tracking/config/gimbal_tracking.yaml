@@ -69,9 +69,13 @@ gimbal_target_tracker:
     local_search_pitch_bands_deg: [0.0, -8.0, 8.0, -16.0, 16.0]
     # Global search uses absolute pitch levels, starting near the horizon.
     global_search_pitch_levels_deg: [0.0, -20.0, 20.0, -40.0, 30.0, -60.0, -80.0]
-    # 0 disables search pausing based on cmd-actual lag. Keep disabled by
-    # default because PX4/Gazebo feedback can include small frame offsets.
-    max_search_cmd_actual_error_deg: 0.0
+    # During visual tracking, freeze cmd integration if cmd-actual lag stays
+    # above this threshold long enough. 0 disables the tracking watchdog.
+    max_tracking_cmd_actual_error_deg: 30.0
+    tracking_cmd_actual_error_timeout_s: 0.5
+    # During search, wait before advancing the scan if the gimbal has not
+    # caught up to the current command. 0 disables this search watchdog.
+    max_search_cmd_actual_error_deg: 30.0
     use_gimbal_feedback: true
     initialize_command_from_feedback: true
     configure_gimbal_manager: true
