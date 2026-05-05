@@ -10,7 +10,7 @@ gimbal_target_tracker:
     target_class_id: ""
     target_track_id: ""
     lock_target_track: true
-    min_score: 0.35
+    min_score: 0.2
     lost_timeout_s: 0.8
     detections_stream_timeout_s: 2.0
 
@@ -32,8 +32,8 @@ gimbal_target_tracker:
     pitch_feedforward_deg_s: 0.0
     max_yaw_error_integral_deg_s: 90.0
     max_pitch_error_integral_deg_s: 90.0
-    max_yaw_rate_deg_s: 45.0
-    max_pitch_rate_deg_s: 30.0
+    max_yaw_rate_deg_s: 90.0
+    max_pitch_rate_deg_s: 90.0
     yaw_error_sign: 1.0
     pitch_error_sign: -1.0
 
