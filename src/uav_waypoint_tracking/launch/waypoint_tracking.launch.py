@@ -39,11 +39,15 @@ def generate_launch_description():
     camera_info_topic = LaunchConfiguration("camera_info_topic")
 
     enable_yolo_tracking = LaunchConfiguration("enable_yolo_tracking")
+    enable_yolo_annotation = LaunchConfiguration("enable_yolo_annotation")
     yolo_tracking_config_file = LaunchConfiguration("yolo_tracking_config_file")
     yolo_weights_path = LaunchConfiguration("yolo_weights_path")
     yolo_tracks_topic = LaunchConfiguration("yolo_tracks_topic")
     yolo_tracks_annotated_image_topic = LaunchConfiguration(
         "yolo_tracks_annotated_image_topic"
+    )
+    yolo_annotation_max_publish_hz = LaunchConfiguration(
+        "yolo_annotation_max_publish_hz"
     )
 
     enable_gimbal_tracking = LaunchConfiguration("enable_gimbal_tracking")
@@ -51,6 +55,13 @@ def generate_launch_description():
     gimbal_input_topic = LaunchConfiguration("gimbal_input_topic")
     gimbal_attitude_topic = LaunchConfiguration("gimbal_attitude_topic")
     gimbal_set_attitude_topic = LaunchConfiguration("gimbal_set_attitude_topic")
+    enable_gimbal_performance_monitor = LaunchConfiguration(
+        "enable_gimbal_performance_monitor"
+    )
+    gimbal_tracking_active_topic = LaunchConfiguration("gimbal_tracking_active_topic")
+    gimbal_performance_metrics_topic = LaunchConfiguration(
+        "gimbal_performance_metrics_topic"
+    )
 
     return LaunchDescription(
         [
@@ -200,6 +211,11 @@ def generate_launch_description():
                 description="Start YOLO BoT-SORT tracking with persistent track ids.",
             ),
             DeclareLaunchArgument(
+                "enable_yolo_annotation",
+                default_value="false",
+                description="Start optional YOLO track annotation image publisher.",
+            ),
+            DeclareLaunchArgument(
                 "yolo_tracking_config_file",
                 default_value=PathJoinSubstitution(
                     [
@@ -224,6 +240,11 @@ def generate_launch_description():
                 "yolo_tracks_annotated_image_topic",
                 default_value="/x500_0/yolo/tracks_image",
                 description="YOLO tracking annotated image output topic.",
+            ),
+            DeclareLaunchArgument(
+                "yolo_annotation_max_publish_hz",
+                default_value="15.0",
+                description="Maximum publish rate for the optional annotated image topic.",
             ),
             DeclareLaunchArgument(
                 "enable_gimbal_tracking",
@@ -255,6 +276,21 @@ def generate_launch_description():
                 "gimbal_set_attitude_topic",
                 default_value="/fmu/in/gimbal_manager_set_attitude",
                 description="PX4 high-rate gimbal manager attitude setpoint input topic.",
+            ),
+            DeclareLaunchArgument(
+                "enable_gimbal_performance_monitor",
+                default_value="false",
+                description="Start gimbal visual-servo performance monitor.",
+            ),
+            DeclareLaunchArgument(
+                "gimbal_tracking_active_topic",
+                default_value="/x500_0/gimbal_target_tracker/tracking_active",
+                description="Gimbal target tracker active-state topic.",
+            ),
+            DeclareLaunchArgument(
+                "gimbal_performance_metrics_topic",
+                default_value="/x500_0/gimbal_performance/metrics",
+                description="DiagnosticArray topic with core gimbal performance metrics.",
             ),
             Node(
                 package="uav_waypoint_tracking",
@@ -361,8 +397,26 @@ def generate_launch_description():
                         "weights_path": yolo_weights_path,
                         "image_topic": camera_image_topic,
                         "tracks_topic": yolo_tracks_topic,
-                        "annotated_image_topic": yolo_tracks_annotated_image_topic,
                     },
+                ],
+            ),
+            Node(
+                package="uav_waypoint_tracking",
+                executable="yolo_annotator",
+                name="yolo_annotator",
+                namespace=node_namespace,
+                output="screen",
+                condition=IfCondition(enable_yolo_annotation),
+                parameters=[
+                    {
+                        "image_topic": camera_image_topic,
+                        "tracks_topic": yolo_tracks_topic,
+                        "annotated_image_topic": yolo_tracks_annotated_image_topic,
+                        "max_publish_hz": ParameterValue(
+                            yolo_annotation_max_publish_hz,
+                            value_type=float,
+                        ),
+                    }
                 ],
             ),
             Node(
@@ -376,7 +430,6 @@ def generate_launch_description():
                     gimbal_config_file,
                     {
                         "detections_topic": gimbal_input_topic,
-                        "camera_image_topic": camera_image_topic,
                         "camera_info_topic": camera_info_topic,
                         "gimbal_attitude_topic": gimbal_attitude_topic,
                         "gimbal_set_attitude_topic": gimbal_set_attitude_topic,
@@ -387,6 +440,22 @@ def generate_launch_description():
                         "source_system": ParameterValue(source_system, value_type=int),
                         "source_component": ParameterValue(source_component, value_type=int),
                     },
+                ],
+            ),
+            Node(
+                package="uav_waypoint_tracking",
+                executable="gimbal_performance_monitor",
+                name="gimbal_performance_monitor",
+                namespace=node_namespace,
+                output="screen",
+                condition=IfCondition(enable_gimbal_performance_monitor),
+                parameters=[
+                    {
+                        "detections_topic": gimbal_input_topic,
+                        "tracking_active_topic": gimbal_tracking_active_topic,
+                        "camera_info_topic": camera_info_topic,
+                        "metrics_topic": gimbal_performance_metrics_topic,
+                    }
                 ],
             ),
         ]

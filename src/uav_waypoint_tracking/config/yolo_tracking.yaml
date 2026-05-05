@@ -5,7 +5,6 @@ yolo_tracker:
     weights_path: /home/zk/uav_waypoint_tracking_sim/yolov8s.pt
     image_topic: /x500_0/camera/image_raw
     tracks_topic: /x500_0/yolo/tracks
-    annotated_image_topic: /x500_0/yolo/tracks_image
 
     # Ultralytics tracker backend. BoT-SORT handles moving-camera scenes better
     # than the ByteTrack baseline in this simulation.
@@ -22,7 +21,10 @@ yolo_tracker:
     classes: ""
     device: ""
 
-    # Publication behavior.
-    publish_annotated_image: true
-    publish_tracks: true
+    # Track export behavior.
     publish_untracked_detections: false
+
+    # Internal rate diagnostics. This is measured inside yolo_tracker, so it
+    # does not add another subscriber to /x500_0/camera/image_raw.
+    diagnostics_topic: /x500_0/yolo/diagnostics
+    diagnostics_rate_hz: 2.0

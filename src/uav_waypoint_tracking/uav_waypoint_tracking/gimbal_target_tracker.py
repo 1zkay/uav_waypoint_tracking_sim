@@ -24,7 +24,7 @@ from rclpy.qos import (
     ReliabilityPolicy,
     qos_profile_sensor_data,
 )
-from sensor_msgs.msg import CameraInfo, Image
+from sensor_msgs.msg import CameraInfo
 from std_msgs.msg import Bool
 from vision_msgs.msg import Detection2D, Detection2DArray
 
@@ -62,7 +62,6 @@ class TrackingState(str, Enum):
     HOLD = "hold"
     LOCAL_SEARCH = "local_search"
     GLOBAL_SEARCH = "global_search"
-    CAMERA_FAULT = "camera_fault"
     VISION_STREAM_LOST = "vision_stream_lost"
 
 
@@ -81,7 +80,6 @@ class GimbalTargetTracker(Node):
         super().__init__("gimbal_target_tracker")
 
         self.declare_parameter("detections_topic", "/x500_0/yolo/tracks")
-        self.declare_parameter("camera_image_topic", "/x500_0/camera/image_raw")
         self.declare_parameter("camera_info_topic", "/x500_0/camera/camera_info")
         self.declare_parameter(
             "gimbal_attitude_topic",
@@ -109,7 +107,6 @@ class GimbalTargetTracker(Node):
         self.declare_parameter("min_score", 0.35)
         self.declare_parameter("control_rate_hz", 20.0)
         self.declare_parameter("lost_timeout_s", 0.8)
-        self.declare_parameter("camera_image_timeout_s", 1.0)
         self.declare_parameter("detections_stream_timeout_s", 2.0)
         self.declare_parameter("fallback_fx_px", 410.93927419797166)
         self.declare_parameter("fallback_fy_px", 410.93927419797166)
@@ -177,7 +174,6 @@ class GimbalTargetTracker(Node):
         self.declare_parameter("configure_max_attempts", 0)
 
         self.detections_topic = str(self.get_parameter("detections_topic").value)
-        self.camera_image_topic = str(self.get_parameter("camera_image_topic").value)
         self.camera_info_topic = str(self.get_parameter("camera_info_topic").value)
         self.gimbal_attitude_topic = str(
             self.get_parameter("gimbal_attitude_topic").value
@@ -203,10 +199,6 @@ class GimbalTargetTracker(Node):
         self.min_score = float(self.get_parameter("min_score").value)
         self.control_rate_hz = float(self.get_parameter("control_rate_hz").value)
         self.lost_timeout_s = float(self.get_parameter("lost_timeout_s").value)
-        self.camera_image_timeout_s = max(
-            0.0,
-            float(self.get_parameter("camera_image_timeout_s").value),
-        )
         self.detections_stream_timeout_s = max(
             0.0,
             float(self.get_parameter("detections_stream_timeout_s").value),
@@ -349,7 +341,6 @@ class GimbalTargetTracker(Node):
         self.last_detection: SelectedDetection | None = None
         self.last_detection_time_s: float | None = None
         self.last_detections_msg_time_s: float | None = None
-        self.last_camera_image_time_s: float | None = None
         self.target_missing_since_s: float | None = None
         self.last_update_time_s: float | None = None
         self.last_gimbal_feedback_time_s: float | None = None
@@ -408,12 +399,6 @@ class GimbalTargetTracker(Node):
             10,
         )
         self.create_subscription(
-            Image,
-            self.camera_image_topic,
-            self._camera_image_callback,
-            qos_profile_sensor_data,
-        )
-        self.create_subscription(
             CameraInfo,
             self.camera_info_topic,
             self._camera_info_callback,
@@ -439,7 +424,7 @@ class GimbalTargetTracker(Node):
         track_filter = self.target_track_id or "auto-lock"
         self.get_logger().info(
             "Gimbal target tracker ready: "
-            f"detections={self.detections_topic}, image={self.camera_image_topic}, "
+            f"detections={self.detections_topic}, "
             f"camera_info={self.camera_info_topic}, "
             f"gimbal_attitude={self.gimbal_attitude_topic}, "
             f"command_interface={self.command_interface}, "
@@ -462,9 +447,6 @@ class GimbalTargetTracker(Node):
         except (TypeError, ValueError):
             result = []
         return result or fallback
-
-    def _camera_image_callback(self, _msg: Image) -> None:
-        self.last_camera_image_time_s = self._now_s()
 
     def _camera_info_callback(self, msg: CameraInfo) -> None:
         if len(msg.k) < 6:
@@ -761,11 +743,7 @@ class GimbalTargetTracker(Node):
         self._reset_tracking_gimbal_lag()
         self._mark_target_missing_if_needed(now_s)
 
-        if not self._has_recent_camera_image(now_s):
-            self.tracking_state = TrackingState.CAMERA_FAULT
-            self._reset_search()
-            self._publish_hold_setpoint_if_needed(now_us)
-        elif not self._has_recent_detections_stream(now_s):
+        if not self._has_recent_detections_stream(now_s):
             self.tracking_state = TrackingState.VISION_STREAM_LOST
             self._reset_search()
             self._publish_hold_setpoint_if_needed(now_us)
@@ -826,14 +804,6 @@ class GimbalTargetTracker(Node):
         if self.target_missing_since_s is None:
             return None
         return max(0.0, now_s - self.target_missing_since_s)
-
-    def _has_recent_camera_image(self, now_s: float) -> bool:
-        if self.camera_image_timeout_s <= 0.0:
-            return True
-        return (
-            self.last_camera_image_time_s is not None
-            and now_s - self.last_camera_image_time_s <= self.camera_image_timeout_s
-        )
 
     def _has_recent_detections_stream(self, now_s: float) -> bool:
         if self.detections_stream_timeout_s <= 0.0:
@@ -1201,11 +1171,6 @@ class GimbalTargetTracker(Node):
 
     def _publish_gimbal_state(self, now_us: int, active: bool) -> None:
         now_s = now_us * 1e-6
-        camera_image_age_s = (
-            None
-            if self.last_camera_image_time_s is None
-            else max(0.0, now_s - self.last_camera_image_time_s)
-        )
         detections_stream_age_s = (
             None
             if self.last_detections_msg_time_s is None
@@ -1239,10 +1204,7 @@ class GimbalTargetTracker(Node):
         status = DiagnosticStatus()
         status.name = "gimbal_target_tracker"
         status.hardware_id = f"gimbal_device_id={int(self.gimbal_device_id)}"
-        if self.tracking_state is TrackingState.CAMERA_FAULT:
-            status.level = DiagnosticStatus.ERROR
-            status.message = "camera image stream lost"
-        elif self.tracking_state is TrackingState.VISION_STREAM_LOST:
+        if self.tracking_state is TrackingState.VISION_STREAM_LOST:
             status.level = DiagnosticStatus.WARN
             status.message = "detection stream lost"
         elif self.tracking_state in {
@@ -1307,7 +1269,6 @@ class GimbalTargetTracker(Node):
                 "command_initialized_from_feedback",
                 self.command_initialized_from_feedback,
             ),
-            self._diagnostic_value("camera_image_age_s", camera_image_age_s),
             self._diagnostic_value(
                 "detections_stream_age_s",
                 detections_stream_age_s,

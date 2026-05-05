@@ -7,6 +7,7 @@ import time
 
 import rclpy
 from cv_bridge import CvBridge, CvBridgeError
+from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
@@ -33,7 +34,9 @@ class YoloTracker(Node):
     The default tracker backend is BoT-SORT. Output remains
     vision_msgs/Detection2DArray so downstream nodes can consume either
     detector or tracker results with the same message type. For tracked objects,
-    Detection2D.id is the persistent track id.
+    Detection2D.id is the persistent track id. Annotated image rendering is
+    intentionally handled by the separate yolo_annotator node so visualization
+    cannot slow the visual-servo control path.
     """
 
     def __init__(self) -> None:
@@ -42,7 +45,6 @@ class YoloTracker(Node):
         self.declare_parameter("weights_path", "/home/zk/uav_waypoint_tracking_sim/yolov8s.pt")
         self.declare_parameter("image_topic", "/x500_0/camera/image_raw")
         self.declare_parameter("tracks_topic", "/x500_0/yolo/tracks")
-        self.declare_parameter("annotated_image_topic", "/x500_0/yolo/tracks_image")
         self.declare_parameter("tracker_config", "botsort.yaml")
         self.declare_parameter("confidence_threshold", 0.35)
         self.declare_parameter("iou_threshold", 0.45)
@@ -51,14 +53,13 @@ class YoloTracker(Node):
         self.declare_parameter("max_inference_hz", 15.0)
         self.declare_parameter("classes", "")
         self.declare_parameter("device", "")
-        self.declare_parameter("publish_annotated_image", True)
-        self.declare_parameter("publish_tracks", True)
         self.declare_parameter("publish_untracked_detections", False)
+        self.declare_parameter("diagnostics_topic", "/x500_0/yolo/diagnostics")
+        self.declare_parameter("diagnostics_rate_hz", 2.0)
 
         self.weights_path = str(self.get_parameter("weights_path").value)
         self.image_topic = str(self.get_parameter("image_topic").value)
         self.tracks_topic = str(self.get_parameter("tracks_topic").value)
-        self.annotated_image_topic = str(self.get_parameter("annotated_image_topic").value)
         self.tracker_config = str(self.get_parameter("tracker_config").value).strip()
         self.confidence_threshold = float(self.get_parameter("confidence_threshold").value)
         self.iou_threshold = float(self.get_parameter("iou_threshold").value)
@@ -70,10 +71,13 @@ class YoloTracker(Node):
         )
         self.classes = parse_classes(str(self.get_parameter("classes").value))
         self.device = str(self.get_parameter("device").value).strip()
-        self.publish_annotated_image = bool(self.get_parameter("publish_annotated_image").value)
-        self.publish_tracks = bool(self.get_parameter("publish_tracks").value)
         self.publish_untracked_detections = bool(
             self.get_parameter("publish_untracked_detections").value
+        )
+        self.diagnostics_topic = str(self.get_parameter("diagnostics_topic").value)
+        self.diagnostics_rate_hz = max(
+            0.0,
+            float(self.get_parameter("diagnostics_rate_hz").value),
         )
 
         if not Path(self.weights_path).is_file():
@@ -91,15 +95,11 @@ class YoloTracker(Node):
         self.class_names = getattr(self.model, "names", {})
         self.bridge = CvBridge()
 
-        self.tracks_pub = (
-            self.create_publisher(Detection2DArray, self.tracks_topic, 10)
-            if self.publish_tracks
-            else None
-        )
-        self.annotated_image_pub = (
-            self.create_publisher(Image, self.annotated_image_topic, 10)
-            if self.publish_annotated_image
-            else None
+        self.tracks_pub = self.create_publisher(Detection2DArray, self.tracks_topic, 10)
+        self.diagnostics_pub = self.create_publisher(
+            DiagnosticArray,
+            self.diagnostics_topic,
+            10,
         )
         self.image_sub = self.create_subscription(
             Image,
@@ -112,6 +112,21 @@ class YoloTracker(Node):
         self._latest_image_msg: Image | None = None
         self._latest_image_sequence = 0
         self._processed_image_sequence = 0
+        self._stats_lock = threading.Lock()
+        self._image_callback_count = 0
+        self._processed_frame_count = 0
+        self._published_tracks_count = 0
+        self._dropped_frame_count = 0
+        self._inference_error_count = 0
+        self._last_image_callback_time_s: float | None = None
+        self._last_tracks_publish_time_s: float | None = None
+        self._last_inference_duration_s: float | None = None
+        self._last_track_count = 0
+        self._diagnostics_last_time_s = time.monotonic()
+        self._diagnostics_last_image_count = 0
+        self._diagnostics_last_processed_count = 0
+        self._diagnostics_last_published_count = 0
+        self._diagnostics_last_dropped_count = 0
         self._stop_event = threading.Event()
         self._inference_thread = threading.Thread(
             target=self._inference_loop,
@@ -119,6 +134,12 @@ class YoloTracker(Node):
             daemon=True,
         )
         self._inference_thread.start()
+        self.diagnostics_timer = None
+        if self.diagnostics_rate_hz > 0.0:
+            self.diagnostics_timer = self.create_timer(
+                1.0 / self.diagnostics_rate_hz,
+                self._publish_diagnostics,
+            )
 
         class_filter = "all classes" if self.classes is None else f"classes={self.classes}"
         inference_limit = (
@@ -129,9 +150,10 @@ class YoloTracker(Node):
         self.get_logger().info(
             "YOLO tracker ready: "
             f"image={self.image_topic}, tracks={self.tracks_topic}, "
-            f"annotated={self.annotated_image_topic}, weights={self.weights_path}, "
+            f"weights={self.weights_path}, "
             f"tracker={self.tracker_config or 'ultralytics default'}, {class_filter}, "
-            f"latest-frame inference, max_inference={inference_limit}"
+            f"latest-frame inference, max_inference={inference_limit}, "
+            f"diagnostics={self.diagnostics_topic}"
         )
 
     def _image_callback(self, msg: Image) -> None:
@@ -139,6 +161,9 @@ class YoloTracker(Node):
             self._latest_image_msg = msg
             self._latest_image_sequence += 1
             self._frame_condition.notify()
+        with self._stats_lock:
+            self._image_callback_count += 1
+            self._last_image_callback_time_s = time.monotonic()
 
     def _inference_loop(self) -> None:
         last_inference_start_s = 0.0
@@ -161,6 +186,10 @@ class YoloTracker(Node):
                     continue
 
                 image_msg = self._latest_image_msg
+                skipped_frames = max(
+                    0,
+                    self._latest_image_sequence - self._processed_image_sequence - 1,
+                )
                 self._processed_image_sequence = self._latest_image_sequence
 
             if image_msg is None:
@@ -168,9 +197,14 @@ class YoloTracker(Node):
 
             now_s = time.monotonic()
             last_inference_start_s = now_s
+            with self._stats_lock:
+                self._processed_frame_count += 1
+                self._dropped_frame_count += skipped_frames
             try:
-                self._process_image(image_msg)
+                self._process_image(image_msg, now_s)
             except Exception as exc:  # noqa: BLE001 - keep the worker alive after inference errors.
+                with self._stats_lock:
+                    self._inference_error_count += 1
                 self.get_logger().error(f"YOLO inference failed: {exc}")
 
     def _min_inference_period_s(self) -> float:
@@ -178,7 +212,7 @@ class YoloTracker(Node):
             return 0.0
         return 1.0 / self.max_inference_hz
 
-    def _process_image(self, msg: Image) -> None:
+    def _process_image(self, msg: Image, inference_start_s: float) -> None:
         try:
             frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
         except CvBridgeError as exc:
@@ -207,14 +241,102 @@ class YoloTracker(Node):
         result = results[0]
 
         tracks = self._extract_tracks(result)
-        if self.tracks_pub is not None:
-            self.tracks_pub.publish(self._to_detection_array(msg, tracks))
+        self.tracks_pub.publish(self._to_detection_array(msg, tracks))
+        with self._stats_lock:
+            self._published_tracks_count += 1
+            self._last_tracks_publish_time_s = time.monotonic()
+            self._last_inference_duration_s = (
+                self._last_tracks_publish_time_s - inference_start_s
+            )
+            self._last_track_count = len(tracks)
 
-        if self.annotated_image_pub is not None:
-            annotated = result.plot()
-            annotated_msg = self.bridge.cv2_to_imgmsg(annotated, encoding="bgr8")
-            annotated_msg.header = msg.header
-            self.annotated_image_pub.publish(annotated_msg)
+    def _publish_diagnostics(self) -> None:
+        now_s = time.monotonic()
+        with self._stats_lock:
+            image_count = self._image_callback_count
+            processed_count = self._processed_frame_count
+            published_count = self._published_tracks_count
+            dropped_count = self._dropped_frame_count
+            inference_error_count = self._inference_error_count
+            last_image_callback_time_s = self._last_image_callback_time_s
+            last_tracks_publish_time_s = self._last_tracks_publish_time_s
+            last_inference_duration_s = self._last_inference_duration_s
+            last_track_count = self._last_track_count
+
+            dt_s = max(1e-9, now_s - self._diagnostics_last_time_s)
+            image_callback_rate_hz = (
+                image_count - self._diagnostics_last_image_count
+            ) / dt_s
+            processed_rate_hz = (
+                processed_count - self._diagnostics_last_processed_count
+            ) / dt_s
+            tracks_publish_rate_hz = (
+                published_count - self._diagnostics_last_published_count
+            ) / dt_s
+            dropped_rate_hz = (
+                dropped_count - self._diagnostics_last_dropped_count
+            ) / dt_s
+
+            self._diagnostics_last_time_s = now_s
+            self._diagnostics_last_image_count = image_count
+            self._diagnostics_last_processed_count = processed_count
+            self._diagnostics_last_published_count = published_count
+            self._diagnostics_last_dropped_count = dropped_count
+
+        image_age_s = (
+            None
+            if last_image_callback_time_s is None
+            else max(0.0, now_s - last_image_callback_time_s)
+        )
+        tracks_age_s = (
+            None
+            if last_tracks_publish_time_s is None
+            else max(0.0, now_s - last_tracks_publish_time_s)
+        )
+
+        msg = DiagnosticArray()
+        msg.header.stamp = self.get_clock().now().to_msg()
+
+        status = DiagnosticStatus()
+        status.name = "yolo_tracker"
+        status.hardware_id = self.image_topic
+        if image_age_s is None:
+            status.level = DiagnosticStatus.WARN
+            status.message = "waiting for camera images"
+        elif tracks_age_s is None:
+            status.level = DiagnosticStatus.WARN
+            status.message = "waiting for track output"
+        elif tracks_age_s > 1.0:
+            status.level = DiagnosticStatus.WARN
+            status.message = "track output stale"
+        else:
+            status.level = DiagnosticStatus.OK
+            status.message = "tracking active"
+
+        status.values = [
+            self._diagnostic_value("image_callback_rate_hz", image_callback_rate_hz),
+            self._diagnostic_value("processed_frame_rate_hz", processed_rate_hz),
+            self._diagnostic_value("tracks_publish_rate_hz", tracks_publish_rate_hz),
+            self._diagnostic_value("dropped_input_frame_rate_hz", dropped_rate_hz),
+            self._diagnostic_value("image_callback_count", image_count),
+            self._diagnostic_value("processed_frame_count", processed_count),
+            self._diagnostic_value("published_tracks_count", published_count),
+            self._diagnostic_value("dropped_input_frame_count", dropped_count),
+            self._diagnostic_value("inference_error_count", inference_error_count),
+            self._diagnostic_value("last_inference_duration_s", last_inference_duration_s),
+            self._diagnostic_value("last_track_count", last_track_count),
+            self._diagnostic_value("last_image_age_s", image_age_s),
+            self._diagnostic_value("last_tracks_age_s", tracks_age_s),
+        ]
+        msg.status.append(status)
+        self.diagnostics_pub.publish(msg)
+
+    @staticmethod
+    def _diagnostic_value(key: str, value: float | int | None) -> KeyValue:
+        item = KeyValue()
+        item.key = key
+        item.value = "nan" if value is None else str(value)
+        return item
 
     def destroy_node(self) -> bool:
         self._stop_event.set()

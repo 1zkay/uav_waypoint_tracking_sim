@@ -5,7 +5,6 @@ gimbal_target_tracker:
     error_topic: /x500_0/gimbal_target_tracker/error
     tracking_active_topic: /x500_0/gimbal_target_tracker/tracking_active
     state_topic: /x500_0/gimbal_target_tracker/state
-    camera_image_topic: /x500_0/camera/image_raw
 
     # Detection selection.
     target_class_id: ""
@@ -13,7 +12,6 @@ gimbal_target_tracker:
     lock_target_track: true
     min_score: 0.35
     lost_timeout_s: 0.8
-    camera_image_timeout_s: 1.0
     detections_stream_timeout_s: 2.0
 
     # Camera-calibrated image-plane visual-servo loop. CameraInfo is preferred;

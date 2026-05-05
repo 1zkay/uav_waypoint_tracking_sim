@@ -65,7 +65,9 @@ add_launch_arg "run_id" "${RUN_ID}"
 # publishers on /x500_0/camera/* and /x500_0/yolo/*.
 add_launch_arg "enable_camera_bridge" "false"
 add_launch_arg "enable_yolo_tracking" "false"
+add_launch_arg "enable_yolo_annotation" "false"
 add_launch_arg "enable_gimbal_tracking" "false"
+add_launch_arg "enable_gimbal_performance_monitor" "false"
 
 if [[ -n "${LOG_ROOT}" ]]; then
   add_launch_arg "log_root" "${LOG_ROOT}"
