@@ -16,22 +16,23 @@ from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPo
 from std_msgs.msg import Int32
 from visualization_msgs.msg import Marker, MarkerArray
 
+from uav_trajectory_tracking.parametric_trajectory import ParametricTrajectory, Point3
+
 
 Color = tuple[float, float, float, float]
-Waypoint = tuple[float, float, float]
 
 
-class WaypointVisualizer(Node):
-    """Publish RViz markers for PX4 local NED waypoint tracking."""
+class TrajectoryVisualizer(Node):
+    """Publish RViz markers for a sampled PX4 local NED parametric trajectory."""
 
     def __init__(self) -> None:
-        super().__init__("waypoint_visualizer")
+        super().__init__("trajectory_visualizer")
 
-        self.declare_parameter("waypoints_file", "")
+        self.declare_parameter("trajectory_file", "")
         self.declare_parameter("vehicle_local_position_topic", "/fmu/out/vehicle_local_position_v1")
-        self.declare_parameter("current_index_topic", "/waypoint_tracker/current_waypoint_index")
-        self.declare_parameter("waypoint_markers_topic", "/waypoint_markers")
-        self.declare_parameter("waypoint_path_topic", "/waypoint_path")
+        self.declare_parameter("trajectory_stage_topic", "/trajectory_tracker/current_stage")
+        self.declare_parameter("trajectory_markers_topic", "/trajectory_markers")
+        self.declare_parameter("trajectory_path_topic", "/trajectory_path")
         self.declare_parameter("vehicle_path_topic", "/vehicle_path")
         self.declare_parameter("frame_id", "map")
         self.declare_parameter("publish_rate_hz", 5.0)
@@ -39,8 +40,9 @@ class WaypointVisualizer(Node):
         self.declare_parameter("vehicle_path_max_points", 2000)
 
         config = self._load_config()
-        self.waypoints = self._parse_waypoints(config)
-        self.acceptance_radius_m = float(config.get("acceptance_radius_m", 1.0))
+        self.trajectory = ParametricTrajectory.from_config(config)
+        self.planned_points = self.trajectory.sample_points(include_return=True)
+        self.acceptance_radius_m = self.trajectory.return_acceptance_radius_m
         self.frame_id = self.get_parameter("frame_id").get_parameter_value().string_value
         self.path_min_distance_m = float(
             self.get_parameter("vehicle_path_min_distance_m").get_parameter_value().double_value
@@ -49,7 +51,7 @@ class WaypointVisualizer(Node):
             self.get_parameter("vehicle_path_max_points").get_parameter_value().integer_value
         )
 
-        self.current_index = 0
+        self.current_stage_index = 0
         self.vehicle_local_position: VehicleLocalPosition | None = None
         self.vehicle_path_points: list[Point] = []
 
@@ -69,9 +71,9 @@ class WaypointVisualizer(Node):
         vehicle_local_position_topic = (
             self.get_parameter("vehicle_local_position_topic").get_parameter_value().string_value
         )
-        current_index_topic = self.get_parameter("current_index_topic").get_parameter_value().string_value
-        waypoint_markers_topic = self.get_parameter("waypoint_markers_topic").get_parameter_value().string_value
-        waypoint_path_topic = self.get_parameter("waypoint_path_topic").get_parameter_value().string_value
+        trajectory_stage_topic = self.get_parameter("trajectory_stage_topic").get_parameter_value().string_value
+        trajectory_markers_topic = self.get_parameter("trajectory_markers_topic").get_parameter_value().string_value
+        trajectory_path_topic = self.get_parameter("trajectory_path_topic").get_parameter_value().string_value
         vehicle_path_topic = self.get_parameter("vehicle_path_topic").get_parameter_value().string_value
 
         self.create_subscription(
@@ -80,58 +82,45 @@ class WaypointVisualizer(Node):
             self._vehicle_local_position_callback,
             px4_qos,
         )
-        self.create_subscription(Int32, current_index_topic, self._current_index_callback, tracker_state_qos)
+        self.create_subscription(Int32, trajectory_stage_topic, self._trajectory_stage_callback, tracker_state_qos)
 
-        self.marker_pub = self.create_publisher(MarkerArray, waypoint_markers_topic, 10)
-        self.planned_path_pub = self.create_publisher(NavPath, waypoint_path_topic, 10)
+        self.marker_pub = self.create_publisher(MarkerArray, trajectory_markers_topic, 10)
+        self.planned_path_pub = self.create_publisher(NavPath, trajectory_path_topic, 10)
         self.vehicle_path_pub = self.create_publisher(NavPath, vehicle_path_topic, 10)
 
         publish_rate_hz = float(self.get_parameter("publish_rate_hz").get_parameter_value().double_value)
         self.timer = self.create_timer(1.0 / max(publish_rate_hz, 1.0), self._timer_callback)
 
         self.get_logger().info(
-            f"Visualizing {len(self.waypoints)} waypoints in RViz frame '{self.frame_id}'. "
-            "PX4 NED is converted to ROS ENU."
+            f"Visualizing {len(self.planned_points)} sampled parametric path points in RViz "
+            f"frame '{self.frame_id}'. PX4 NED is converted to ROS ENU."
         )
         self.get_logger().info(
-            f"Publishing visualization topics: {waypoint_markers_topic}, "
-            f"{waypoint_path_topic}, {vehicle_path_topic}"
+            f"Publishing visualization topics: {trajectory_markers_topic}, "
+            f"{trajectory_path_topic}, {vehicle_path_topic}"
         )
 
     def _load_config(self) -> dict[str, Any]:
-        config_path = self.get_parameter("waypoints_file").get_parameter_value().string_value
+        config_path = self.get_parameter("trajectory_file").get_parameter_value().string_value
 
         if not config_path:
-            share_dir = Path(get_package_share_directory("uav_waypoint_tracking"))
-            config_path = str(share_dir / "config" / "waypoints.yaml")
+            share_dir = Path(get_package_share_directory("uav_trajectory_tracking"))
+            config_path = str(share_dir / "config" / "trajectory_hold.yaml")
 
         path = Path(config_path).expanduser()
         if not path.exists():
-            raise FileNotFoundError(f"Waypoint config does not exist: {path}")
+            raise FileNotFoundError(f"Trajectory config does not exist: {path}")
 
         with path.open("r", encoding="utf-8") as stream:
             config = yaml.safe_load(stream) or {}
 
         if str(config.get("frame", "NED")).upper() != "NED":
-            raise ValueError("Only PX4 local NED waypoints are supported in this package.")
+            raise ValueError("Only PX4 local NED trajectory configs are supported.")
 
         return config
 
-    def _parse_waypoints(self, config: dict[str, Any]) -> list[Waypoint]:
-        raw_waypoints = config.get("waypoints")
-        if not isinstance(raw_waypoints, list) or not raw_waypoints:
-            raise ValueError("Config must contain a non-empty 'waypoints' list.")
-
-        waypoints: list[Waypoint] = []
-        for index, waypoint in enumerate(raw_waypoints):
-            if not isinstance(waypoint, list | tuple) or len(waypoint) != 3:
-                raise ValueError(f"Waypoint {index} must be [x, y, z].")
-            waypoints.append(tuple(float(value) for value in waypoint))
-
-        return waypoints
-
-    def _current_index_callback(self, msg: Int32) -> None:
-        self.current_index = max(0, min(int(msg.data), len(self.waypoints)))
+    def _trajectory_stage_callback(self, msg: Int32) -> None:
+        self.current_stage_index = max(0, int(msg.data))
 
     def _vehicle_local_position_callback(self, msg: VehicleLocalPosition) -> None:
         self.vehicle_local_position = msg
@@ -152,12 +141,13 @@ class WaypointVisualizer(Node):
 
     def _timer_callback(self) -> None:
         now = self.get_clock().now().to_msg()
+        planned_path_points = [self._ned_to_enu(point) for point in self.planned_points]
 
-        self.marker_pub.publish(self._make_markers(now))
-        self.planned_path_pub.publish(self._make_path([self._ned_to_enu(wp) for wp in self.waypoints], now))
+        self.marker_pub.publish(self._make_markers(planned_path_points, now))
+        self.planned_path_pub.publish(self._make_path(planned_path_points, now))
         self.vehicle_path_pub.publish(self._make_path(self.vehicle_path_points, now))
 
-    def _make_markers(self, stamp) -> MarkerArray:
+    def _make_markers(self, planned_points: list[Point], stamp) -> MarkerArray:
         markers = MarkerArray()
         clear_marker = Marker()
         clear_marker.header.frame_id = self.frame_id
@@ -166,8 +156,6 @@ class WaypointVisualizer(Node):
         markers.markers.append(clear_marker)
 
         marker_id = 1
-
-        planned_points = [self._ned_to_enu(wp) for wp in self.waypoints]
         markers.markers.append(
             self._line_strip(
                 marker_id,
@@ -180,30 +168,25 @@ class WaypointVisualizer(Node):
         )
         marker_id += 1
 
-        for index, waypoint in enumerate(self.waypoints):
-            point = self._ned_to_enu(waypoint)
-            if self.current_index >= len(self.waypoints) or index < self.current_index:
-                color = (0.1, 0.75, 0.25, 1.0)
-            elif index == self.current_index:
-                color = (1.0, 0.55, 0.05, 1.0)
-            else:
-                color = (0.05, 0.35, 1.0, 0.9)
-
+        if planned_points:
             markers.markers.append(
-                self._sphere(marker_id, "waypoint_points", point, 0.58, color, stamp)
-            )
-            marker_id += 1
-            markers.markers.append(
-                self._acceptance_disk(marker_id, point, self.acceptance_radius_m, color, stamp)
-            )
-            marker_id += 1
-            markers.markers.append(
-                self._text(
+                self._sphere(
                     marker_id,
-                    "waypoint_labels",
-                    Point(x=point.x, y=point.y, z=point.z + 0.9),
-                    f"WP{index + 1}",
-                    color,
+                    "trajectory_start",
+                    planned_points[0],
+                    0.42,
+                    (0.05, 0.35, 1.0, 0.95),
+                    stamp,
+                )
+            )
+            marker_id += 1
+            markers.markers.append(
+                self._sphere(
+                    marker_id,
+                    "trajectory_end",
+                    planned_points[-1],
+                    0.46,
+                    (0.1, 0.75, 0.25, 1.0),
                     stamp,
                 )
             )
@@ -220,19 +203,6 @@ class WaypointVisualizer(Node):
             markers.markers.append(
                 self._sphere(marker_id, "vehicle", vehicle_point, 0.38, (0.95, 0.95, 0.95, 1.0), stamp)
             )
-            marker_id += 1
-
-            if self.current_index < len(planned_points):
-                markers.markers.append(
-                    self._arrow(
-                        marker_id,
-                        "target_vector",
-                        vehicle_point,
-                        planned_points[self.current_index],
-                        (1.0, 0.55, 0.0, 0.85),
-                        stamp,
-                    )
-                )
 
         return markers
 
@@ -285,46 +255,20 @@ class WaypointVisualizer(Node):
         self._set_color(marker, color)
         return marker
 
-    def _acceptance_disk(self, marker_id: int, point: Point, radius: float, color: Color, stamp) -> Marker:
-        marker = self._base_marker(marker_id, "acceptance_radius", Marker.CYLINDER, stamp)
-        marker.pose.position = Point(x=point.x, y=point.y, z=point.z)
-        marker.scale.x = radius * 2.0
-        marker.scale.y = radius * 2.0
-        marker.scale.z = 0.04
-        self._set_color(marker, (color[0], color[1], color[2], 0.18))
-        return marker
-
-    def _text(self, marker_id: int, namespace: str, point: Point, text: str, color: Color, stamp) -> Marker:
-        marker = self._base_marker(marker_id, namespace, Marker.TEXT_VIEW_FACING, stamp)
-        marker.pose.position = point
-        marker.scale.z = 0.6
-        marker.text = text
-        self._set_color(marker, color)
-        return marker
-
-    def _arrow(self, marker_id: int, namespace: str, start: Point, end: Point, color: Color, stamp) -> Marker:
-        marker = self._base_marker(marker_id, namespace, Marker.ARROW, stamp)
-        marker.points = [start, end]
-        marker.scale.x = 0.08
-        marker.scale.y = 0.22
-        marker.scale.z = 0.22
-        self._set_color(marker, color)
-        return marker
-
     def _set_color(self, marker: Marker, color: Color) -> None:
         marker.color.r = color[0]
         marker.color.g = color[1]
         marker.color.b = color[2]
         marker.color.a = color[3]
 
-    def _ned_to_enu(self, point: Waypoint) -> Point:
+    def _ned_to_enu(self, point: Point3) -> Point:
         x_north, y_east, z_down = point
         return Point(x=y_east, y=x_north, z=-z_down)
 
 
 def main(args: list[str] | None = None) -> None:
     rclpy.init(args=args)
-    node = WaypointVisualizer()
+    node = TrajectoryVisualizer()
 
     try:
         rclpy.spin(node)

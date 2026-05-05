@@ -2,6 +2,7 @@
 
 import argparse
 import math
+import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
@@ -9,37 +10,42 @@ from typing import Any
 import yaml
 
 
+PACKAGE_SRC = Path(__file__).resolve().parents[1] / "src" / "uav_trajectory_tracking"
+sys.path.insert(0, str(PACKAGE_SRC))
+
+from uav_trajectory_tracking.parametric_trajectory import ParametricTrajectory  # noqa: E402
+
+
 GENERATED_MODEL_NAMES = {
-    "mission_reference_yard",
-    "waypoint_markers",
-    "planned_route_altitude_line",
+    "trajectory_reference_yard",
+    "trajectory_endpoints",
+    "planned_trajectory_line",
     "wind_direction_indicator",
 }
 
 
-Waypoint = tuple[float, float, float]
+NedPoint = tuple[float, float, float]
 Point3 = tuple[float, float, float]
 Color = tuple[float, float, float, float]
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Render Gazebo waypoint visuals from a PX4 local NED waypoint YAML file."
+        description="Render Gazebo trajectory visuals from a PX4 local NED trajectory YAML file."
     )
     parser.add_argument("--base-world", required=True, type=Path)
-    parser.add_argument("--waypoints", required=True, type=Path)
+    parser.add_argument("--trajectory-file", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--wind-config", type=Path)
     parser.add_argument(
         "--include-visuals",
         action="store_true",
-        help="Insert waypoint, boundary, reference, and wind direction visuals.",
+        help="Insert trajectory, boundary, reference, and wind direction visuals.",
     )
     args = parser.parse_args()
 
-    config = load_waypoint_config(args.waypoints)
-    waypoints = parse_waypoints(config)
-    acceptance_radius = float(config.get("acceptance_radius_m", 1.0))
+    config = load_trajectory_config(args.trajectory_file)
+    trajectory_points = sample_trajectory_points(config)
     wind_config = load_wind_config(args.wind_config)
 
     tree = ET.parse(args.base_world)
@@ -52,7 +58,7 @@ def main() -> None:
     configure_wind(world, wind_config)
     if args.include_visuals:
         insert_index = find_insert_index(world)
-        for model in make_generated_models(waypoints, acceptance_radius, wind_config):
+        for model in make_generated_models(trajectory_points, wind_config):
             world.insert(insert_index, model)
             insert_index += 1
 
@@ -62,15 +68,15 @@ def main() -> None:
     args.output.write_text(args.output.read_text(encoding="utf-8") + "\n", encoding="utf-8")
 
 
-def load_waypoint_config(path: Path) -> dict[str, Any]:
+def load_trajectory_config(path: Path) -> dict[str, Any]:
     if not path.exists():
-        raise FileNotFoundError(f"Waypoint config does not exist: {path}")
+        raise FileNotFoundError(f"Trajectory config does not exist: {path}")
 
     with path.open("r", encoding="utf-8") as stream:
         config = yaml.safe_load(stream) or {}
 
     if str(config.get("frame", "NED")).upper() != "NED":
-        raise ValueError("Only PX4 local NED waypoints are supported.")
+        raise ValueError("Only PX4 local NED trajectories are supported.")
 
     return config
 
@@ -91,18 +97,9 @@ def load_wind_config(path: Path | None) -> dict[str, Any]:
     return config
 
 
-def parse_waypoints(config: dict[str, Any]) -> list[Waypoint]:
-    raw_waypoints = config.get("waypoints")
-    if not isinstance(raw_waypoints, list) or not raw_waypoints:
-        raise ValueError("Config must contain a non-empty 'waypoints' list.")
-
-    waypoints: list[Waypoint] = []
-    for index, waypoint in enumerate(raw_waypoints):
-        if not isinstance(waypoint, list | tuple) or len(waypoint) != 3:
-            raise ValueError(f"Waypoint {index} must be [x, y, z].")
-        waypoints.append(tuple(float(value) for value in waypoint))
-
-    return waypoints
+def sample_trajectory_points(config: dict[str, Any]) -> list[NedPoint]:
+    trajectory = ParametricTrajectory.from_config(config)
+    return trajectory.sample_points(include_return=True)
 
 
 def remove_generated_models(world: ET.Element) -> None:
@@ -146,13 +143,11 @@ def find_insert_index(world: ET.Element) -> int:
     return len(world)
 
 
-def make_generated_models(
-    waypoints: list[Waypoint], acceptance_radius: float, wind_config: dict[str, Any]
-) -> list[ET.Element]:
-    points = [ned_to_gazebo(waypoint) for waypoint in waypoints]
+def make_generated_models(trajectory_points: list[NedPoint], wind_config: dict[str, Any]) -> list[ET.Element]:
+    points = [ned_to_gazebo(point) for point in trajectory_points]
     models = [
         make_reference_yard(points),
-        make_waypoint_markers(points, acceptance_radius),
+        make_trajectory_endpoints(points),
         make_route_line(points),
     ]
     if bool(wind_config.get("enabled", False)):
@@ -168,7 +163,7 @@ def make_reference_yard(points: list[Point3]) -> ET.Element:
     depth = max_y - min_y
     first = points[0]
 
-    model = ET.Element("model", {"name": "mission_reference_yard"})
+    model = ET.Element("model", {"name": "trajectory_reference_yard"})
     ET.SubElement(model, "static").text = "true"
     link = ET.SubElement(model, "link", {"name": "link"})
 
@@ -203,38 +198,24 @@ def make_reference_yard(points: list[Point3]) -> ET.Element:
     return model
 
 
-def make_waypoint_markers(points: list[Point3], acceptance_radius: float) -> ET.Element:
-    model = ET.Element("model", {"name": "waypoint_markers"})
+def make_trajectory_endpoints(points: list[Point3]) -> ET.Element:
+    model = ET.Element("model", {"name": "trajectory_endpoints"})
     ET.SubElement(model, "static").text = "true"
     link = ET.SubElement(model, "link", {"name": "link"})
 
-    for index, point in enumerate(points):
-        color = waypoint_color(index, len(points))
-        marker_name = f"wp{index + 1:03d}"
-        mast_height = max(point[2], 0.2)
-        add_cylinder_visual(
-            link,
-            f"{marker_name}_mast",
-            (point[0], point[1], mast_height / 2.0),
-            0.045,
-            mast_height,
-            color,
-        )
-        add_sphere_visual(link, f"{marker_name}_target", point, 0.072, color)
-        add_cylinder_visual(
-            link,
-            f"{marker_name}_acceptance",
-            point,
-            acceptance_radius,
-            0.035,
-            (color[0], color[1], color[2], 0.22),
-        )
+    if not points:
+        return model
+
+    start = points[0]
+    end = points[-1]
+    add_sphere_visual(link, "start", start, 0.18, (0.05, 0.35, 1.0, 1.0))
+    add_sphere_visual(link, "end", end, 0.20, (0.08, 0.75, 0.28, 1.0))
 
     return model
 
 
 def make_route_line(points: list[Point3]) -> ET.Element:
-    model = ET.Element("model", {"name": "planned_route_altitude_line"})
+    model = ET.Element("model", {"name": "planned_trajectory_line"})
     ET.SubElement(model, "static").text = "true"
     link = ET.SubElement(model, "link", {"name": "link"})
 
@@ -455,12 +436,6 @@ def xy_bounds(points: list[Point3], margin: float) -> tuple[float, float, float,
     return min(xs) - margin, max(xs) + margin, min(ys) - margin, max(ys) + margin
 
 
-def waypoint_color(index: int, count: int) -> Color:
-    if index == 0 or index == count - 1:
-        return (0.08, 0.75, 0.28, 1.0)
-    return (0.05, 0.35, 1.0, 1.0)
-
-
 def dark_gray() -> Color:
     return (0.15, 0.15, 0.15, 1.0)
 
@@ -469,8 +444,8 @@ def wind_color() -> Color:
     return (0.1, 0.55, 0.9, 1.0)
 
 
-def ned_to_gazebo(waypoint: Waypoint) -> Point3:
-    x_north, y_east, z_down = waypoint
+def ned_to_gazebo(point: NedPoint) -> Point3:
+    x_north, y_east, z_down = point
     return (y_east, x_north, -z_down)
 
 

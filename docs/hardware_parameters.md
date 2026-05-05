@@ -2,7 +2,7 @@
 
 本文档汇总当前工作区实际使用的仿真硬件参数，包括主机无人机 `x500_0`、目标无人机 `x500_1`、主机云台、云台相机，以及对应参数的修改路径。
 
-这里的“硬件参数”指 Gazebo/PX4 SDF 模型、PX4 airframe 中定义的质量、惯量、旋翼、电机、传感器、云台机械结构和云台控制器参数；不包括 ROS 视觉伺服调参、YOLO 推理参数或航点控制算法参数。
+这里的“硬件参数”指 Gazebo/PX4 SDF 模型、PX4 airframe 中定义的质量、惯量、旋翼、电机、传感器、云台机械结构和云台控制器参数；不包括 ROS 视觉伺服调参、YOLO 推理参数或轨迹控制算法参数。
 
 ## 当前模型链路
 
@@ -10,13 +10,13 @@
 
 | 角色       | Gazebo 模型名 | 模型 URI                              | 初始位姿        |
 | ---------- | ------------- | ------------------------------------- | --------------- |
-| 主机无人机 | `x500_0`    | `model://x500_gimbal_waypoint_wind` | `0 0 0 0 0 0` |
-| 目标无人机 | `x500_1`    | `model://x500_waypoint_wind`        | `0 5 0 0 0 0` |
+| 主机无人机 | `x500_0`    | `model://x500_gimbal_trajectory_wind` | `0 0 0 0 0 0` |
+| 目标无人机 | `x500_1`    | `model://x500_trajectory_wind`        | `0 5 0 0 0 0` |
 
 主机模型解析链路：
 
 ```text
-x500_gimbal_waypoint_wind
+x500_gimbal_trajectory_wind
   -> x500_gimbal_self_filtered
        -> x500_self_hidden
             -> x500_base_self_hidden
@@ -26,7 +26,7 @@ x500_gimbal_waypoint_wind
 目标机模型解析链路：
 
 ```text
-x500_waypoint_wind
+x500_trajectory_wind
   -> x500
        -> x500_base
 ```
@@ -266,11 +266,11 @@ PX4 Gazebo bridge 最终向这些 Gazebo topic 发布关节位置指令：
 
 | 修改目标                                                 | 修改路径                                                                                         |
 | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| 主机模型 wrapper、风场开关、里程计插件                   | `px4_overlays/models/x500_gimbal_waypoint_wind/model.sdf`                                      |
-| 目标机模型 wrapper、风场开关、里程计插件                 | `px4_overlays/models/x500_waypoint_wind/model.sdf`                                             |
-| world 中加载哪两个模型、模型名、初始位姿                 | `px4_overlays/worlds/waypoint_tracking.sdf`                                                    |
-| 运行时自动生成的 world                                   | `build/generated/worlds/waypoint_tracking.sdf`                                                 |
-| PX4 实际运行时使用的 world 副本                          | `/home/zk/PX4-Autopilot/Tools/simulation/gz/worlds/waypoint_tracking.sdf`                      |
+| 主机模型 wrapper、风场开关、里程计插件                   | `px4_overlays/models/x500_gimbal_trajectory_wind/model.sdf`                                      |
+| 目标机模型 wrapper、风场开关、里程计插件                 | `px4_overlays/models/x500_trajectory_wind/model.sdf`                                             |
+| world 中加载哪两个模型、模型名、初始位姿                 | `px4_overlays/worlds/trajectory_tracking.sdf`                                                    |
+| 运行时自动生成的 world                                   | `build/generated/worlds/trajectory_tracking.sdf`                                                 |
+| PX4 实际运行时使用的 world 副本                          | `/home/zk/PX4-Autopilot/Tools/simulation/gz/worlds/trajectory_tracking.sdf`                      |
 | 主机自机消隐机身 visual flags                            | `px4_overlays/models/x500_base_self_hidden/model.sdf`                                         |
 | 主机自机消隐电机模型与旋翼插件                           | `px4_overlays/models/x500_self_hidden/model.sdf`                                              |
 | 主机自机消隐云台安装位姿、固定连接关节                   | `px4_overlays/models/x500_gimbal_self_filtered/model.sdf`                                     |
@@ -280,12 +280,12 @@ PX4 Gazebo bridge 最终向这些 Gazebo topic 发布关节位置指令：
 | PX4 官方云台源模型参考                                   | `/home/zk/PX4-Autopilot/Tools/simulation/gz/models/gimbal/model.sdf`                           |
 | PX4 airframe 云台 mount 默认参数                         | `/home/zk/PX4-Autopilot/ROMFS/px4fmu_common/init.d-posix/airframes/4019_gz_x500_gimbal`        |
 | PX4 构建后的 airframe 副本                               | `/home/zk/PX4-Autopilot/build/px4_sitl_default/etc/init.d-posix/airframes/4019_gz_x500_gimbal` |
-| ROS 云台视觉伺服调参，不是硬件参数                       | `src/uav_waypoint_tracking/config/gimbal_tracking.yaml`                                        |
-| YOLO/BoT-SORT 调参，不是硬件参数                        | `src/uav_waypoint_tracking/config/yolo_tracking.yaml`                                          |
+| ROS 云台视觉伺服调参，不是硬件参数                       | `src/uav_trajectory_tracking/config/gimbal_tracking.yaml`                                        |
+| YOLO/BoT-SORT 调参，不是硬件参数                        | `src/uav_trajectory_tracking/config/yolo_tracking.yaml`                                          |
 
 不要把 `install/` 作为硬件参数修改位置；它是 `colcon` 生成目录。
 
-不要把 `build/generated/worlds/waypoint_tracking.sdf` 作为源文件修改；它会被 `scripts/start_px4_gazebo.sh` 重新生成。
+不要把 `build/generated/worlds/trajectory_tracking.sdf` 作为源文件修改；它会被 `scripts/start_px4_gazebo.sh` 重新生成。
 
 ## 重启与重建说明
 

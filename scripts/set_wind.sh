@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-PX4_GZ_WORLD="${PX4_GZ_WORLD:-waypoint_tracking}"
+PX4_GZ_WORLD="${PX4_GZ_WORLD:-trajectory_tracking}"
 WIND_EAST="${1:-3.0}"
 WIND_NORTH="${2:-0.0}"
 WIND_UP="${3:-0.0}"

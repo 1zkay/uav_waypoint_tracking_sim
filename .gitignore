@@ -21,4 +21,4 @@ __pycache__/
 *.db3
 /yolov8*.pt
 
-/src/uav_waypoint_tracking/config/wind.yaml
+/src/uav_trajectory_tracking/config/wind.yaml

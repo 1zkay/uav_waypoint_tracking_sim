@@ -1,0 +1,35 @@
+# Host UAV figure-eight trajectory in PX4 local NED.
+# x forward/north, y right/east, z down; negative z means altitude above home.
+frame: NED
+trajectory_type: parametric
+
+control_rate_hz: 50.0
+takeoff_warmup_s: 1.5
+land_at_end: true
+loop_route: false
+yaw_mode: face_velocity
+
+curve:
+  duration_s: 40.0
+  constants:
+    cx: 1.0
+    cy: 2.0
+    cz: -5.0
+    ax: 1.8
+    ay: 3.0
+    period: 40.0
+  position:
+    x: cx + ax * sin(2.0 * tau * t / period)
+    y: cy + ay * sin(tau * t / period)
+    z: cz
+  velocity:
+    x: ax * 2.0 * tau / period * cos(2.0 * tau * t / period)
+    y: ay * tau / period * cos(tau * t / period)
+    z: 0.0
+
+return:
+  enabled: true
+  point: [0.0, 0.0, -5.0]
+  acceptance_radius_m: 0.35
+
+visualization_samples: 180

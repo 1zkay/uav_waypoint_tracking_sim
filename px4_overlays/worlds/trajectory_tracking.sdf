@@ -1,5 +1,5 @@
 <sdf version='1.9'>
-  <world name='waypoint_tracking'>
+  <world name='trajectory_tracking'>
     <physics type="ode">
       <max_step_size>0.004</max_step_size>
       <real_time_factor>1.0</real_time_factor>
@@ -130,12 +130,12 @@
     </model>
     <include>
       <name>x500_0</name>
-      <uri>model://x500_gimbal_waypoint_wind</uri>
+      <uri>model://x500_gimbal_trajectory_wind</uri>
       <pose>0 0 0 0 0 0</pose>
     </include>
     <include>
       <name>x500_1</name>
-      <uri>model://x500_waypoint_wind</uri>
+      <uri>model://x500_trajectory_wind</uri>
       <pose>0 5 0 0 0 0</pose>
     </include>
     <light name='sunUTC' type='directional'>

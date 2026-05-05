@@ -47,7 +47,7 @@ class YoloTracker(Node):
     def __init__(self) -> None:
         super().__init__("yolo_tracker")
 
-        self.declare_parameter("weights_path", "/home/zk/uav_waypoint_tracking_sim/yolov8s.pt")
+        self.declare_parameter("weights_path", "/home/zk/uav_trajectory_tracking_sim/yolov8s.pt")
         self.declare_parameter("image_topic", "/x500_0/camera/image_raw")
         self.declare_parameter("tracks_topic", "/x500_0/yolo/tracks")
         self.declare_parameter("tracker_config", "botsort.yaml")

@@ -19,37 +19,40 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Int32
 
+from uav_trajectory_tracking.parametric_trajectory import ParametricTrajectory, Point3
 
-class WaypointTracker(Node):
-    """Track local NED waypoints through PX4 offboard position setpoints."""
+
+class TrajectoryTracker(Node):
+    """Publish PX4 offboard setpoints sampled from a YAML parametric curve."""
 
     def __init__(self) -> None:
-        super().__init__("waypoint_tracker")
+        super().__init__("trajectory_tracker")
 
-        self.declare_parameter("waypoints_file", "")
+        self.declare_parameter("trajectory_file", "")
         self.declare_parameter("vehicle_status_topic", "/fmu/out/vehicle_status_v1")
         self.declare_parameter("vehicle_local_position_topic", "/fmu/out/vehicle_local_position_v1")
         self.declare_parameter("offboard_control_mode_topic", "/fmu/in/offboard_control_mode")
         self.declare_parameter("trajectory_setpoint_topic", "/fmu/in/trajectory_setpoint")
         self.declare_parameter("vehicle_command_topic", "/fmu/in/vehicle_command")
-        self.declare_parameter("current_index_topic", "/waypoint_tracker/current_waypoint_index")
+        self.declare_parameter("trajectory_stage_topic", "/trajectory_tracker/current_stage")
         self.declare_parameter("target_system", 1)
         self.declare_parameter("target_component", 1)
         self.declare_parameter("source_system", 1)
         self.declare_parameter("source_component", 1)
-        config = self._load_config()
 
-        self.waypoints = self._parse_waypoints(config)
-        self.acceptance_radius_m = float(config.get("acceptance_radius_m", 1.0))
-        self.dwell_time_s = float(config.get("dwell_time_s", 0.5))
+        config = self._load_config()
+        self.trajectory = ParametricTrajectory.from_config(config)
         self.control_rate_hz = float(config.get("control_rate_hz", 10.0))
         self.takeoff_warmup_s = float(config.get("takeoff_warmup_s", 1.5))
         self.land_at_end = bool(config.get("land_at_end", True))
-        self.loop_route = bool(config.get("loop_route", True))
-        self.yaw_mode = str(config.get("yaw_mode", "face_next_waypoint"))
+        self.loop_route = bool(config.get("loop_route", False))
+        self.yaw_mode = str(config.get("yaw_mode", "face_velocity"))
 
-        self.current_waypoint_index = 0
-        self.reached_since_us: int | None = None
+        self.current_stage_index = 0
+        self.trajectory_start_us: int | None = None
+        self.returning = False
+        self.return_reached_since_us: int | None = None
+        self.finished = False
         self.setpoint_counter = 0
         self.land_command_sent = False
         self.last_land_command_us = 0
@@ -78,7 +81,7 @@ class WaypointTracker(Node):
             self.get_parameter("trajectory_setpoint_topic").get_parameter_value().string_value
         )
         vehicle_command_topic = self.get_parameter("vehicle_command_topic").get_parameter_value().string_value
-        current_index_topic = self.get_parameter("current_index_topic").get_parameter_value().string_value
+        trajectory_stage_topic = self.get_parameter("trajectory_stage_topic").get_parameter_value().string_value
 
         self.offboard_mode_pub = self.create_publisher(
             OffboardControlMode, offboard_control_mode_topic, qos_profile
@@ -95,8 +98,8 @@ class WaypointTracker(Node):
             history=HistoryPolicy.KEEP_LAST,
             depth=1,
         )
-        self.current_index_pub = self.create_publisher(
-            Int32, current_index_topic, tracker_state_qos
+        self.trajectory_stage_pub = self.create_publisher(
+            Int32, trajectory_stage_topic, tracker_state_qos
         )
 
         vehicle_local_position_topic = (
@@ -121,8 +124,10 @@ class WaypointTracker(Node):
         self.timer = self.create_timer(timer_period, self._timer_callback)
 
         self.get_logger().info(
-            f"Loaded {len(self.waypoints)} NED waypoints; "
-            f"radius={self.acceptance_radius_m:.2f} m, rate={self.control_rate_hz:.1f} Hz"
+            "Loaded parametric NED trajectory: "
+            f"duration={self.trajectory.duration_s:.2f} s, "
+            f"rate={self.control_rate_hz:.1f} Hz, "
+            f"velocity_feedforward={self.trajectory.has_velocity}"
         )
         self.get_logger().info(
             f"Subscribing to state topics: {vehicle_status_topic}, {vehicle_local_position_topic}"
@@ -133,41 +138,23 @@ class WaypointTracker(Node):
         )
 
     def _load_config(self) -> dict[str, Any]:
-        config_path = self.get_parameter("waypoints_file").get_parameter_value().string_value
+        config_path = self.get_parameter("trajectory_file").get_parameter_value().string_value
 
         if not config_path:
-            share_dir = Path(get_package_share_directory("uav_waypoint_tracking"))
-            config_path = str(share_dir / "config" / "waypoints.yaml")
+            share_dir = Path(get_package_share_directory("uav_trajectory_tracking"))
+            config_path = str(share_dir / "config" / "trajectory_hold.yaml")
 
         path = Path(config_path).expanduser()
         if not path.exists():
-            raise FileNotFoundError(f"Waypoint config does not exist: {path}")
+            raise FileNotFoundError(f"Trajectory config does not exist: {path}")
 
         with path.open("r", encoding="utf-8") as stream:
             config = yaml.safe_load(stream) or {}
 
         if str(config.get("frame", "NED")).upper() != "NED":
-            raise ValueError("Only PX4 local NED waypoints are supported in this package.")
+            raise ValueError("Only PX4 local NED trajectory configs are supported.")
 
         return config
-
-    def _parse_waypoints(self, config: dict[str, Any]) -> list[tuple[float, float, float]]:
-        raw_waypoints = config.get("waypoints")
-        if not isinstance(raw_waypoints, list) or not raw_waypoints:
-            raise ValueError("Config must contain a non-empty 'waypoints' list.")
-
-        waypoints: list[tuple[float, float, float]] = []
-        for index, waypoint in enumerate(raw_waypoints):
-            if not isinstance(waypoint, list | tuple) or len(waypoint) != 3:
-                raise ValueError(f"Waypoint {index} must be [x, y, z].")
-            x, y, z = (float(value) for value in waypoint)
-            if z >= 0.0:
-                self.get_logger().warn(
-                    f"Waypoint {index} z={z:.2f}; PX4 NED altitude above home should be negative."
-                )
-            waypoints.append((x, y, z))
-
-        return waypoints
 
     def _vehicle_local_position_callback(self, msg: VehicleLocalPosition) -> None:
         self.vehicle_local_position = msg
@@ -180,15 +167,15 @@ class WaypointTracker(Node):
 
         self._publish_offboard_control_mode(now_us)
 
+        if self._ready_to_track() and not self.land_command_sent:
+            self._advance_trajectory_if_needed(now_us)
+
         if not self.land_command_sent:
             self._publish_current_setpoint(now_us)
 
         warmup_cycles = max(1, int(self.takeoff_warmup_s * self.control_rate_hz))
         if self.setpoint_counter >= warmup_cycles and not self.land_command_sent:
             self._request_offboard_and_arm_if_needed(now_us)
-
-        if self._ready_to_track() and not self.land_command_sent:
-            self._advance_waypoint_if_reached(now_us)
 
         if self.land_command_sent and now_us - self.last_land_command_us > 1_000_000:
             self._land(now_us)
@@ -204,6 +191,65 @@ class WaypointTracker(Node):
             and self.vehicle_status is not None
             and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD
         )
+
+    def _advance_trajectory_if_needed(self, now_us: int) -> None:
+        if self.trajectory_start_us is None:
+            self.trajectory_start_us = now_us
+            self.current_stage_index = 0
+            self.get_logger().info("Started parametric trajectory.")
+            return
+
+        if self.finished:
+            return
+
+        if self.returning:
+            self._advance_return_if_needed(now_us)
+            return
+
+        if self.loop_route and not self.land_at_end:
+            return
+
+        if self._elapsed_s(now_us) < self.trajectory.duration_s:
+            return
+
+        if self.trajectory.return_point is not None:
+            self.returning = True
+            self.return_reached_since_us = None
+            self.current_stage_index = 1
+            self.get_logger().info("Parametric trajectory complete; flying to return point.")
+            return
+
+        self._finish_trajectory(now_us)
+
+    def _advance_return_if_needed(self, now_us: int) -> None:
+        assert self.trajectory.return_point is not None
+        distance = self._distance_to_point(self.trajectory.return_point)
+        if distance > self.trajectory.return_acceptance_radius_m:
+            self.return_reached_since_us = None
+            return
+
+        if self.return_reached_since_us is None:
+            self.return_reached_since_us = now_us
+            self.get_logger().info(f"Reached return point (distance={distance:.2f} m).")
+            return
+
+        self._finish_trajectory(now_us)
+
+    def _finish_trajectory(self, now_us: int) -> None:
+        self.finished = True
+        self.current_stage_index = 2
+        if self.land_at_end:
+            self.get_logger().info("Trajectory complete; sending land command.")
+            self._land(now_us)
+        else:
+            self.get_logger().info("Trajectory complete; holding final setpoint.")
+
+    def _distance_to_point(self, target: Point3) -> float:
+        assert self.vehicle_local_position is not None
+        dx = self.vehicle_local_position.x - target[0]
+        dy = self.vehicle_local_position.y - target[1]
+        dz = self.vehicle_local_position.z - target[2]
+        return math.sqrt(dx * dx + dy * dy + dz * dz)
 
     def _request_offboard_and_arm_if_needed(self, now_us: int) -> None:
         request_interval_us = 1_000_000
@@ -224,67 +270,10 @@ class WaypointTracker(Node):
                 self._arm(now_us)
                 self.last_arm_request_us = now_us
 
-    def _advance_waypoint_if_reached(self, now_us: int) -> None:
-        if self.current_waypoint_index >= len(self.waypoints):
-            self._finish_route(now_us)
-            return
-
-        distance = self._distance_to_current_waypoint()
-        if distance > self.acceptance_radius_m:
-            self.reached_since_us = None
-            return
-
-        if self.reached_since_us is None:
-            self.reached_since_us = now_us
-            waypoint_number = self.current_waypoint_index + 1
-            self.get_logger().info(
-                f"Reached waypoint {waypoint_number}/{len(self.waypoints)} "
-                f"(distance={distance:.2f} m)"
-            )
-            return
-
-        if now_us - self.reached_since_us < int(self.dwell_time_s * 1_000_000):
-            return
-
-        self.current_waypoint_index += 1
-        self.reached_since_us = None
-
-        if self.current_waypoint_index >= len(self.waypoints):
-            self._finish_route(now_us)
-        else:
-            waypoint_number = self.current_waypoint_index + 1
-            waypoint = self.waypoints[self.current_waypoint_index]
-            self.get_logger().info(
-                f"Tracking waypoint {waypoint_number}/{len(self.waypoints)}: "
-                f"x={waypoint[0]:.1f}, y={waypoint[1]:.1f}, z={waypoint[2]:.1f}"
-            )
-
-    def _finish_route(self, now_us: int) -> None:
-        if self.loop_route and not self.land_at_end:
-            self.current_waypoint_index = 0
-            self.reached_since_us = None
-            self.get_logger().info("Route complete; restarting waypoint loop.")
-            return
-
-        if self.land_at_end:
-            self.get_logger().info("Route complete; sending land command.")
-            self._land(now_us)
-        else:
-            self.current_waypoint_index = len(self.waypoints) - 1
-            self.get_logger().info("Route complete; holding final waypoint.")
-
-    def _distance_to_current_waypoint(self) -> float:
-        assert self.vehicle_local_position is not None
-        target = self.waypoints[self.current_waypoint_index]
-        dx = self.vehicle_local_position.x - target[0]
-        dy = self.vehicle_local_position.y - target[1]
-        dz = self.vehicle_local_position.z - target[2]
-        return math.sqrt(dx * dx + dy * dy + dz * dz)
-
     def _publish_offboard_control_mode(self, now_us: int) -> None:
         msg = OffboardControlMode()
         msg.position = True
-        msg.velocity = False
+        msg.velocity = self.trajectory.has_velocity and not self.returning and not self.finished
         msg.acceleration = False
         msg.attitude = False
         msg.body_rate = False
@@ -294,49 +283,74 @@ class WaypointTracker(Node):
         self.offboard_mode_pub.publish(msg)
 
     def _publish_current_setpoint(self, now_us: int) -> None:
-        target_index = min(self.current_waypoint_index, len(self.waypoints) - 1)
-        target = self.waypoints[target_index]
+        target, velocity, yaw = self._current_setpoint(now_us)
 
         msg = TrajectorySetpoint()
         msg.position = [target[0], target[1], target[2]]
-        msg.velocity = [math.nan, math.nan, math.nan]
+        msg.velocity = self._px4_vector_or_nan(velocity)
         msg.acceleration = [math.nan, math.nan, math.nan]
         msg.jerk = [math.nan, math.nan, math.nan]
-        msg.yaw = self._target_yaw(target_index)
+        msg.yaw = yaw
         msg.yawspeed = math.nan
         msg.timestamp = now_us
         self.trajectory_pub.publish(msg)
 
-    def _publish_current_index(self) -> None:
-        msg = Int32()
-        msg.data = min(self.current_waypoint_index, len(self.waypoints))
-        self.current_index_pub.publish(msg)
+    def _current_setpoint(self, now_us: int) -> tuple[Point3, Point3 | None, float]:
+        if self.returning and self.trajectory.return_point is not None:
+            target = self.trajectory.return_point
+            return target, None, self._yaw_to_point(target)
 
-    def _target_yaw(self, target_index: int) -> float:
-        if self.yaw_mode != "face_next_waypoint":
+        position, velocity, configured_yaw = self.trajectory.sample(self._trajectory_time_s(now_us))
+        yaw = self._target_yaw(velocity, configured_yaw)
+        if self.finished:
+            velocity = None
+        return position, velocity, yaw
+
+    @staticmethod
+    def _px4_vector_or_nan(value: Point3 | None) -> list[float]:
+        if value is None:
+            return [math.nan, math.nan, math.nan]
+        return [value[0], value[1], value[2]]
+
+    def _trajectory_time_s(self, now_us: int) -> float:
+        if self.finished:
+            return self.trajectory.duration_s
+        if self.trajectory_start_us is None:
             return 0.0
 
-        if target_index + 1 < len(self.waypoints):
-            start = self.waypoints[target_index]
-            end = self.waypoints[target_index + 1]
-        elif self.loop_route and len(self.waypoints) > 1:
-            start = self.waypoints[target_index]
-            end = self.waypoints[0]
-        elif self.vehicle_local_position is not None:
-            start = (
-                self.vehicle_local_position.x,
-                self.vehicle_local_position.y,
-                self.vehicle_local_position.z,
-            )
-            end = self.waypoints[target_index]
-        else:
-            return 0.0
+        elapsed_s = self._elapsed_s(now_us)
+        if self.loop_route and not self.land_at_end:
+            return elapsed_s % self.trajectory.duration_s
+        return min(elapsed_s, self.trajectory.duration_s)
 
-        dx = end[0] - start[0]
-        dy = end[1] - start[1]
-        if abs(dx) < 1e-3 and abs(dy) < 1e-3:
+    def _elapsed_s(self, now_us: int) -> float:
+        if self.trajectory_start_us is None:
+            return 0.0
+        return max(0.0, (now_us - self.trajectory_start_us) * 1e-6)
+
+    def _target_yaw(self, velocity: Point3 | None, configured_yaw: float | None) -> float:
+        if configured_yaw is not None:
+            return configured_yaw
+        if self.yaw_mode != "face_velocity" or velocity is None:
+            return 0.0
+        vx, vy, _ = velocity
+        if abs(vx) < 1e-6 and abs(vy) < 1e-6:
+            return 0.0
+        return math.atan2(vy, vx)
+
+    def _yaw_to_point(self, target: Point3) -> float:
+        if self.yaw_mode != "face_velocity" or self.vehicle_local_position is None:
+            return 0.0
+        dx = target[0] - self.vehicle_local_position.x
+        dy = target[1] - self.vehicle_local_position.y
+        if abs(dx) < 1e-6 and abs(dy) < 1e-6:
             return 0.0
         return math.atan2(dy, dx)
+
+    def _publish_current_index(self) -> None:
+        msg = Int32()
+        msg.data = self.current_stage_index
+        self.trajectory_stage_pub.publish(msg)
 
     def _set_offboard_mode(self, now_us: int) -> None:
         self._publish_vehicle_command(
@@ -396,7 +410,7 @@ class WaypointTracker(Node):
 
 def main(args: list[str] | None = None) -> None:
     rclpy.init(args=args)
-    node = WaypointTracker()
+    node = TrajectoryTracker()
 
     try:
         rclpy.spin(node)

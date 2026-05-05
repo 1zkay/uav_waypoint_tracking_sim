@@ -4,7 +4,7 @@ set -eo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SIM_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PX4_ROOT="${PX4_ROOT:-/home/zk/PX4-Autopilot}"
-PX4_GZ_WORLD="${PX4_GZ_WORLD:-waypoint_tracking}"
+PX4_GZ_WORLD="${PX4_GZ_WORLD:-trajectory_tracking}"
 PX4_INSTANCE="${PX4_INSTANCE:-1}"
 PX4_GZ_MODEL_NAME="${PX4_GZ_MODEL_NAME:-x500_1}"
 PX4_SYS_AUTOSTART="${PX4_SYS_AUTOSTART:-4001}"

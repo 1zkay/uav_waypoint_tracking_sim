@@ -9,14 +9,14 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     node_namespace = LaunchConfiguration("node_namespace")
-    waypoints_file = LaunchConfiguration("waypoints_file")
+    trajectory_file = LaunchConfiguration("trajectory_file")
     vehicle_status_topic = LaunchConfiguration("vehicle_status_topic")
     vehicle_local_position_topic = LaunchConfiguration("vehicle_local_position_topic")
     offboard_control_mode_topic = LaunchConfiguration("offboard_control_mode_topic")
     trajectory_setpoint_topic = LaunchConfiguration("trajectory_setpoint_topic")
     vehicle_command_topic = LaunchConfiguration("vehicle_command_topic")
     vehicle_command_ack_topic = LaunchConfiguration("vehicle_command_ack_topic")
-    current_index_topic = LaunchConfiguration("current_index_topic")
+    trajectory_stage_topic = LaunchConfiguration("trajectory_stage_topic")
     target_system = LaunchConfiguration("target_system")
     target_component = LaunchConfiguration("target_component")
     source_system = LaunchConfiguration("source_system")
@@ -24,8 +24,8 @@ def generate_launch_description():
     vehicle_attitude_topic = LaunchConfiguration("vehicle_attitude_topic")
     vehicle_odometry_topic = LaunchConfiguration("vehicle_odometry_topic")
     gazebo_odometry_topic = LaunchConfiguration("gazebo_odometry_topic")
-    waypoint_markers_topic = LaunchConfiguration("waypoint_markers_topic")
-    waypoint_path_topic = LaunchConfiguration("waypoint_path_topic")
+    trajectory_markers_topic = LaunchConfiguration("trajectory_markers_topic")
+    trajectory_path_topic = LaunchConfiguration("trajectory_path_topic")
     vehicle_path_topic = LaunchConfiguration("vehicle_path_topic")
     enable_csv_logging = LaunchConfiguration("enable_csv_logging")
     log_root = LaunchConfiguration("log_root")
@@ -72,9 +72,9 @@ def generate_launch_description():
                 description="Optional ROS namespace for node names. Topics below are absolute by default.",
             ),
             DeclareLaunchArgument(
-                "waypoints_file",
+                "trajectory_file",
                 default_value="",
-                description="Path to waypoint YAML file. Empty uses package default.",
+                description="Path to parametric trajectory YAML file. Empty uses package default.",
             ),
             DeclareLaunchArgument(
                 "vehicle_status_topic",
@@ -107,9 +107,9 @@ def generate_launch_description():
                 description="PX4 vehicle command acknowledgement output topic.",
             ),
             DeclareLaunchArgument(
-                "current_index_topic",
-                default_value="/waypoint_tracker/current_waypoint_index",
-                description="Tracker current waypoint index topic.",
+                "trajectory_stage_topic",
+                default_value="/trajectory_tracker/current_stage",
+                description="Tracker current trajectory stage topic.",
             ),
             DeclareLaunchArgument(
                 "target_system",
@@ -147,14 +147,14 @@ def generate_launch_description():
                 description="Gazebo ground truth odometry topic bridged to ROS 2.",
             ),
             DeclareLaunchArgument(
-                "waypoint_markers_topic",
-                default_value="/waypoint_markers",
-                description="RViz waypoint marker topic.",
+                "trajectory_markers_topic",
+                default_value="/trajectory_markers",
+                description="RViz trajectory marker topic.",
             ),
             DeclareLaunchArgument(
-                "waypoint_path_topic",
-                default_value="/waypoint_path",
-                description="RViz planned waypoint path topic.",
+                "trajectory_path_topic",
+                default_value="/trajectory_path",
+                description="RViz planned trajectory path topic.",
             ),
             DeclareLaunchArgument(
                 "vehicle_path_topic",
@@ -179,7 +179,7 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "rviz_frame_id",
                 default_value="map",
-                description="RViz frame used by waypoint_visualizer. PX4 NED is converted to ROS ENU.",
+                description="RViz frame used by trajectory_visualizer. PX4 NED is converted to ROS ENU.",
             ),
             DeclareLaunchArgument(
                 "enable_camera_bridge",
@@ -196,7 +196,7 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "camera_gazebo_topic",
-                default_value="/world/waypoint_tracking/model/x500_0/link/camera_link/sensor/camera/image",
+                default_value="/world/trajectory_tracking/model/x500_0/link/camera_link/sensor/camera/image",
                 description="Gazebo image topic produced by the x500_0 gimbal camera.",
             ),
             DeclareLaunchArgument(
@@ -206,7 +206,7 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "camera_info_gazebo_topic",
-                default_value="/world/waypoint_tracking/model/x500_0/link/camera_link/sensor/camera/camera_info",
+                default_value="/world/trajectory_tracking/model/x500_0/link/camera_link/sensor/camera/camera_info",
                 description="Gazebo CameraInfo topic produced by the x500_0 gimbal camera.",
             ),
             DeclareLaunchArgument(
@@ -228,7 +228,7 @@ def generate_launch_description():
                 "yolo_tracking_config_file",
                 default_value=PathJoinSubstitution(
                     [
-                        FindPackageShare("uav_waypoint_tracking"),
+                        FindPackageShare("uav_trajectory_tracking"),
                         "config",
                         "yolo_tracking.yaml",
                     ]
@@ -237,7 +237,7 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "yolo_weights_path",
-                default_value="/home/zk/uav_waypoint_tracking_sim/yolov8s.pt",
+                default_value="/home/zk/uav_trajectory_tracking_sim/yolov8s.pt",
                 description="YOLO weights used by yolo_tracker.",
             ),
             DeclareLaunchArgument(
@@ -264,7 +264,7 @@ def generate_launch_description():
                 "gimbal_config_file",
                 default_value=PathJoinSubstitution(
                     [
-                        FindPackageShare("uav_waypoint_tracking"),
+                        FindPackageShare("uav_trajectory_tracking"),
                         "config",
                         "gimbal_tracking.yaml",
                     ]
@@ -302,20 +302,20 @@ def generate_launch_description():
                 description="DiagnosticArray topic with core gimbal performance metrics.",
             ),
             Node(
-                package="uav_waypoint_tracking",
-                executable="waypoint_tracker",
-                name="waypoint_tracker",
+                package="uav_trajectory_tracking",
+                executable="trajectory_tracker",
+                name="trajectory_tracker",
                 namespace=node_namespace,
                 output="screen",
                 parameters=[
                     {
-                        "waypoints_file": waypoints_file,
+                        "trajectory_file": trajectory_file,
                         "vehicle_status_topic": vehicle_status_topic,
                         "vehicle_local_position_topic": vehicle_local_position_topic,
                         "offboard_control_mode_topic": offboard_control_mode_topic,
                         "trajectory_setpoint_topic": trajectory_setpoint_topic,
                         "vehicle_command_topic": vehicle_command_topic,
-                        "current_index_topic": current_index_topic,
+                        "trajectory_stage_topic": trajectory_stage_topic,
                         "target_system": target_system,
                         "target_component": target_component,
                         "source_system": source_system,
@@ -324,18 +324,18 @@ def generate_launch_description():
                 ],
             ),
             Node(
-                package="uav_waypoint_tracking",
-                executable="waypoint_visualizer",
-                name="waypoint_visualizer",
+                package="uav_trajectory_tracking",
+                executable="trajectory_visualizer",
+                name="trajectory_visualizer",
                 namespace=node_namespace,
                 output="screen",
                 parameters=[
                     {
-                        "waypoints_file": waypoints_file,
+                        "trajectory_file": trajectory_file,
                         "vehicle_local_position_topic": vehicle_local_position_topic,
-                        "current_index_topic": current_index_topic,
-                        "waypoint_markers_topic": waypoint_markers_topic,
-                        "waypoint_path_topic": waypoint_path_topic,
+                        "trajectory_stage_topic": trajectory_stage_topic,
+                        "trajectory_markers_topic": trajectory_markers_topic,
+                        "trajectory_path_topic": trajectory_path_topic,
                         "vehicle_path_topic": vehicle_path_topic,
                         "frame_id": rviz_frame_id,
                     }
@@ -351,7 +351,7 @@ def generate_launch_description():
                 arguments=[[gazebo_odometry_topic, "@nav_msgs/msg/Odometry@gz.msgs.OdometryWithCovariance"]],
             ),
             Node(
-                package="uav_waypoint_tracking",
+                package="uav_trajectory_tracking",
                 executable="trajectory_logger",
                 name="trajectory_logger",
                 namespace=node_namespace,
@@ -395,7 +395,7 @@ def generate_launch_description():
                 remappings=[(camera_info_gazebo_topic, camera_info_topic)],
             ),
             Node(
-                package="uav_waypoint_tracking",
+                package="uav_trajectory_tracking",
                 executable="yolo_tracker",
                 name="yolo_tracker",
                 namespace=node_namespace,
@@ -411,7 +411,7 @@ def generate_launch_description():
                 ],
             ),
             Node(
-                package="uav_waypoint_tracking",
+                package="uav_trajectory_tracking",
                 executable="yolo_annotator",
                 name="yolo_annotator",
                 namespace=node_namespace,
@@ -430,7 +430,7 @@ def generate_launch_description():
                 ],
             ),
             Node(
-                package="uav_waypoint_tracking",
+                package="uav_trajectory_tracking",
                 executable="gimbal_target_tracker",
                 name="gimbal_target_tracker",
                 namespace=node_namespace,
@@ -453,7 +453,7 @@ def generate_launch_description():
                 ],
             ),
             Node(
-                package="uav_waypoint_tracking",
+                package="uav_trajectory_tracking",
                 executable="gimbal_performance_monitor",
                 name="gimbal_performance_monitor",
                 namespace=node_namespace,

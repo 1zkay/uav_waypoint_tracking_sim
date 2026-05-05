@@ -2,7 +2,7 @@ yolo_tracker:
   ros__parameters:
     # Input/output topics are normally overridden by the launch file so this
     # config can be reused with different camera namespaces.
-    weights_path: /home/zk/uav_waypoint_tracking_sim/yolov8s.pt
+    weights_path: /home/zk/uav_trajectory_tracking_sim/yolov8s.pt
     image_topic: /x500_0/camera/image_raw
     tracks_topic: /x500_0/yolo/tracks
 

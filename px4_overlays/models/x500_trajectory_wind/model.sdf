@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <sdf version='1.9'>
-  <model name='x500_waypoint_wind'>
+  <model name='x500_trajectory_wind'>
     <include merge='true'>
       <uri>model://x500</uri>
     </include>

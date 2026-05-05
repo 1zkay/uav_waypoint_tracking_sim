@@ -31,7 +31,7 @@ yolo_tracker(BoT-SORT) ──► /x500_0/yolo/tracks
         └──── configure ─► /fmu/in/vehicle_command
 ```
 
-`gimbal_target_tracker` 不控制无人机位置，只控制主机云台。无人机 0 的航点跟踪、目标机的航点跟踪、BoT-SORT 目标跟踪和云台视觉伺服保持分层独立。
+`gimbal_target_tracker` 不控制无人机位置，只控制主机云台。无人机 0 的轨迹跟踪、目标机的轨迹跟踪、BoT-SORT 目标跟踪和云台视觉伺服保持分层独立。
 
 ## 为什么只保留 tracking
 
@@ -48,39 +48,39 @@ yolo_tracker(BoT-SORT) ──► /x500_0/yolo/tracks
 
 - MAVROS / MAVLink mount control：提供通用云台命令接口，但通常不包含“跟踪目标中心误差 → 云台视觉伺服”的完整应用闭环。
 - YOLO ROS wrapper：负责图像检测或跟踪，但一般不直接负责 PX4 gimbal manager 指令。
-- 多无人机 Gazebo / PX4 demo：负责多机仿真或航点控制，但不直接解决“目标无人机始终位于某一架机云台相机中心”的问题。
+- 多无人机 Gazebo / PX4 demo：负责多机仿真或轨迹控制，但不直接解决“目标无人机始终位于某一架机云台相机中心”的问题。
 
 因此，本仓库采用轻量集成方案：在现有 ROS 2 / PX4 / Gazebo Harmonic 工程中加入 `yolo_tracker` 和 `gimbal_target_tracker` 两个独立节点。云台连续闭环使用 PX4 gimbal manager 高频 setpoint topic，`VehicleCommand` 只用于一次性 gimbal manager 配置和兼容回退。
 
 ## 启动方式
 
-常规流程仍然是先启动 XRCE Agent、PX4/Gazebo、目标机和目标机航点控制：
+常规流程仍然是先启动 XRCE Agent、PX4/Gazebo、目标机和目标机轨迹控制：
 
 ```bash
 ./scripts/start_agent.sh
 ./scripts/start_px4_gazebo.sh
 ./scripts/start_target_px4_gazebo.sh
-./scripts/start_target_waypoint_tracking.sh
+./scripts/start_target_trajectory_tracking.sh
 ```
 
-然后启动主机航点跟踪、相机桥接、BoT-SORT 跟踪和云台视觉伺服：
+然后启动主机轨迹跟踪、相机桥接、BoT-SORT 跟踪和云台视觉伺服：
 
 ```bash
-ENABLE_GIMBAL_TRACKING=true ./scripts/start_waypoint_tracking.sh
+ENABLE_GIMBAL_TRACKING=true ./scripts/start_trajectory_tracking.sh
 ```
 
-`start_waypoint_tracking.sh` 默认启用 `ENABLE_YOLO_TRACKING=true`，因此一般不需要额外指定跟踪开关。
+`start_trajectory_tracking.sh` 默认启用 `ENABLE_YOLO_TRACKING=true`，因此一般不需要额外指定跟踪开关。
 
 如果只想测试视觉链路，可以先不开云台闭环：
 
 ```bash
-ENABLE_GIMBAL_TRACKING=false ./scripts/start_waypoint_tracking.sh
+ENABLE_GIMBAL_TRACKING=false ./scripts/start_trajectory_tracking.sh
 ```
 
-如果只想测试云台闭环而不让主机移动，可以把主机航点 YAML 改成悬停点，或者单独启动云台节点并订阅跟踪结果：
+如果只想测试云台闭环而不让主机移动，可以把主机轨迹 YAML 改成悬停点，或者单独启动云台节点并订阅跟踪结果：
 
 ```bash
-ros2 run uav_waypoint_tracking gimbal_target_tracker \
+ros2 run uav_trajectory_tracking gimbal_target_tracker \
   --ros-args \
   -p detections_topic:=/x500_0/yolo/tracks \
   -p camera_info_topic:=/x500_0/camera/camera_info \
@@ -94,8 +94,8 @@ ros2 run uav_waypoint_tracking gimbal_target_tracker \
 默认参数主要来自两个 YAML 文件：
 
 ```text
-src/uav_waypoint_tracking/config/yolo_tracking.yaml
-src/uav_waypoint_tracking/config/gimbal_tracking.yaml
+src/uav_trajectory_tracking/config/yolo_tracking.yaml
+src/uav_trajectory_tracking/config/gimbal_tracking.yaml
 ```
 
 `yolo_tracking.yaml` 管理 YOLO/BoT-SORT 参数，例如：
@@ -170,13 +170,13 @@ ENABLE_YOLO_TRACKING=true \
 ENABLE_GIMBAL_TRACKING=true \
 YOLO_TRACKS_TOPIC=/x500_0/yolo/tracks \
 GIMBAL_INPUT_TOPIC=/x500_0/yolo/tracks \
-./scripts/start_waypoint_tracking.sh
+./scripts/start_trajectory_tracking.sh
 ```
 
 含义如下：
 
 - `ENABLE_YOLO_TRACKING`：是否启动 YOLO + BoT-SORT 跟踪，默认 `true`。
-- `ENABLE_GIMBAL_TRACKING`：是否启动视觉闭环云台跟踪，`start_waypoint_tracking.sh` 默认 `true`。
+- `ENABLE_GIMBAL_TRACKING`：是否启动视觉闭环云台跟踪，`start_trajectory_tracking.sh` 默认 `true`。
 - `YOLO_TRACKS_TOPIC`：`yolo_tracker` 发布的跟踪结果 topic。
 - `GIMBAL_INPUT_TOPIC`：`gimbal_target_tracker` 订阅的 `Detection2DArray` topic，默认等于 `YOLO_TRACKS_TOPIC`。
 - `GIMBAL_ATTITUDE_TOPIC`：云台真实姿态反馈 topic，默认 `/fmu/out/gimbal_device_attitude_status`。
@@ -272,7 +272,7 @@ target_track_id 为空且 lock_target_track=true：自动锁定首次选中的 t
 每个新终端执行 ROS 2 命令前都需要先加载本工作区环境，否则 `px4_msgs` 自定义消息无法解析，`ros2 topic echo /fmu/out/gimbal_device_attitude_status --once` 会报 `The message type 'px4_msgs/msg/GimbalDeviceAttitudeStatus' is invalid`：
 
 ```bash
-cd /home/zk/uav_waypoint_tracking_sim
+cd /home/zk/uav_trajectory_tracking_sim
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
 ```
@@ -319,7 +319,7 @@ ros2 topic echo /x500_0/gimbal_target_tracker/state --once
 
 ## 调参建议
 
-1. 先不开主机航点，只让目标机运动，确认 `/x500_0/yolo/tracks` 中的 `Detection2D.id` 能保持相对稳定。
+1. 先不开主机轨迹，只让目标机运动，确认 `/x500_0/yolo/tracks` 中的 `Detection2D.id` 能保持相对稳定。
 2. 再打开 `ENABLE_GIMBAL_TRACKING=true`，观察云台是否能把目标拉回画面中心。
 3. 如果目标向右偏，云台也继续向右导致更偏，反转 `gimbal_tracking.yaml` 中的 `yaw_error_sign`。
 4. 如果目标向上偏，云台也继续向上导致更偏，反转 `pitch_error_sign`。

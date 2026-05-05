@@ -1,0 +1,31 @@
+# Target UAV smooth loop trajectory in its PX4 local NED frame.
+# x forward/north, y right/east, z down; negative z means altitude above home.
+frame: NED
+trajectory_type: parametric
+
+control_rate_hz: 10.0
+takeoff_warmup_s: 1.5
+land_at_end: false
+loop_route: true
+yaw_mode: face_velocity
+
+curve:
+  duration_s: 48.0
+  constants:
+    cx: -1.0
+    cy: 2.0
+    cz: -5.0
+    ax: 0.9
+    ay: 6.0
+    az: 1.1
+    period: 48.0
+  position:
+    x: cx + ax * cos(tau * t / period)
+    y: cy + ay * sin(tau * t / period)
+    z: cz - az * sin(2.0 * tau * t / period)
+  velocity:
+    x: -ax * tau / period * sin(tau * t / period)
+    y: ay * tau / period * cos(tau * t / period)
+    z: -az * 2.0 * tau / period * cos(2.0 * tau * t / period)
+
+visualization_samples: 180

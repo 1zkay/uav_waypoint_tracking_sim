@@ -1,9 +1,9 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>uav_waypoint_tracking</name>
+  <name>uav_trajectory_tracking</name>
   <version>0.1.0</version>
-  <description>PX4 SITL ROS 2 offboard waypoint tracking simulation package.</description>
+  <description>PX4 SITL ROS 2 offboard trajectory tracking simulation package.</description>
   <maintainer email="zk@localhost.localdomain">zk</maintainer>
   <license>Apache-2.0</license>
 

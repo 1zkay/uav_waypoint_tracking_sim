@@ -3,7 +3,7 @@ set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SIM_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-WAYPOINTS_FILE="${WAYPOINTS_FILE:-${SIM_ROOT}/src/uav_waypoint_tracking/config/waypoints.yaml}"
+TRAJECTORY_FILE="${TRAJECTORY_FILE:-${SIM_ROOT}/src/uav_trajectory_tracking/config/trajectory_figure8.yaml}"
 LOG_ROOT="${LOG_ROOT:-}"
 RUN_ID="${RUN_ID:-}"
 PYTHON_VENV="${PYTHON_VENV:-/home/zk/px4-venv}"
@@ -13,9 +13,9 @@ ENABLE_YOLO_ANNOTATION="${ENABLE_YOLO_ANNOTATION:-false}"
 ENABLE_GIMBAL_TRACKING="${ENABLE_GIMBAL_TRACKING:-true}"
 ENABLE_GIMBAL_PERFORMANCE_MONITOR="${ENABLE_GIMBAL_PERFORMANCE_MONITOR:-${ENABLE_GIMBAL_TRACKING}}"
 CAMERA_IMAGE_BRIDGE_QOS="${CAMERA_IMAGE_BRIDGE_QOS:-default}"
-CAMERA_GAZEBO_TOPIC="${CAMERA_GAZEBO_TOPIC:-/world/waypoint_tracking/model/x500_0/link/camera_link/sensor/camera/image}"
+CAMERA_GAZEBO_TOPIC="${CAMERA_GAZEBO_TOPIC:-/world/trajectory_tracking/model/x500_0/link/camera_link/sensor/camera/image}"
 CAMERA_IMAGE_TOPIC="${CAMERA_IMAGE_TOPIC:-/x500_0/camera/image_raw}"
-CAMERA_INFO_GAZEBO_TOPIC="${CAMERA_INFO_GAZEBO_TOPIC:-/world/waypoint_tracking/model/x500_0/link/camera_link/sensor/camera/camera_info}"
+CAMERA_INFO_GAZEBO_TOPIC="${CAMERA_INFO_GAZEBO_TOPIC:-/world/trajectory_tracking/model/x500_0/link/camera_link/sensor/camera/camera_info}"
 CAMERA_INFO_TOPIC="${CAMERA_INFO_TOPIC:-/x500_0/camera/camera_info}"
 YOLO_WEIGHTS_PATH="${YOLO_WEIGHTS_PATH:-${SIM_ROOT}/yolov8s.pt}"
 YOLO_TRACKS_TOPIC="${YOLO_TRACKS_TOPIC:-/x500_0/yolo/tracks}"
@@ -74,7 +74,7 @@ add_launch_arg() {
   fi
 }
 
-add_launch_arg "waypoints_file" "${WAYPOINTS_FILE}"
+add_launch_arg "trajectory_file" "${TRAJECTORY_FILE}"
 add_launch_arg "enable_camera_bridge" "${ENABLE_CAMERA_BRIDGE}"
 add_launch_arg "camera_image_bridge_qos" "${CAMERA_IMAGE_BRIDGE_QOS}"
 add_launch_arg "enable_yolo_tracking" "${ENABLE_YOLO_TRACKING}"
@@ -108,11 +108,11 @@ if [[ -n "${RUN_ID}" ]]; then
   add_launch_arg "run_id" "${RUN_ID}"
 fi
 
-echo "Launching waypoint tracker with ${WAYPOINTS_FILE}"
+echo "Launching parametric trajectory tracker with ${TRAJECTORY_FILE}"
 echo "Camera bridge: $(launch_arg_value enable_camera_bridge "${ENABLE_CAMERA_BRIDGE}") qos=$(launch_arg_value camera_image_bridge_qos "${CAMERA_IMAGE_BRIDGE_QOS}") $(launch_arg_value camera_gazebo_topic "${CAMERA_GAZEBO_TOPIC}") -> $(launch_arg_value camera_image_topic "${CAMERA_IMAGE_TOPIC}")"
 echo "CameraInfo bridge: $(launch_arg_value camera_info_gazebo_topic "${CAMERA_INFO_GAZEBO_TOPIC}") -> $(launch_arg_value camera_info_topic "${CAMERA_INFO_TOPIC}")"
 echo "YOLO tracking: $(launch_arg_value enable_yolo_tracking "${ENABLE_YOLO_TRACKING}") tracks=$(launch_arg_value yolo_tracks_topic "${YOLO_TRACKS_TOPIC}")"
 echo "YOLO annotation: $(launch_arg_value enable_yolo_annotation "${ENABLE_YOLO_ANNOTATION}") annotated=$(launch_arg_value yolo_tracks_annotated_image_topic "${YOLO_TRACKS_ANNOTATED_IMAGE_TOPIC}") max_hz=$(launch_arg_value yolo_annotation_max_publish_hz "${YOLO_ANNOTATION_MAX_PUBLISH_HZ}")"
 echo "Gimbal tracking: $(launch_arg_value enable_gimbal_tracking "${ENABLE_GIMBAL_TRACKING}") input=$(launch_arg_value gimbal_input_topic "${GIMBAL_INPUT_TOPIC}") attitude=$(launch_arg_value gimbal_attitude_topic "${GIMBAL_ATTITUDE_TOPIC}") setpoint=$(launch_arg_value gimbal_set_attitude_topic "${GIMBAL_SET_ATTITUDE_TOPIC}")"
 echo "Gimbal performance monitor: $(launch_arg_value enable_gimbal_performance_monitor "${ENABLE_GIMBAL_PERFORMANCE_MONITOR}") metrics=$(launch_arg_value gimbal_performance_metrics_topic "${GIMBAL_PERFORMANCE_METRICS_TOPIC}")"
-exec ros2 launch uav_waypoint_tracking waypoint_tracking.launch.py "${launch_args[@]}"
+exec ros2 launch uav_trajectory_tracking trajectory_tracking.launch.py "${launch_args[@]}"
