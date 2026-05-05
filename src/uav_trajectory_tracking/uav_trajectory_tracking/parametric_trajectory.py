@@ -137,7 +137,7 @@ class ParametricTrajectory:
             return_point = parse_point(required(return_config, "point", "return"), "return.point")
 
         return_acceptance_radius_m = positive_float(
-            return_config.get("acceptance_radius_m", config.get("acceptance_radius_m", 1.0)),
+            return_config.get("acceptance_radius_m", config.get("acceptance_radius_m", 0.1)),
             "return.acceptance_radius_m",
         )
         visualization_samples = max(2, int(config.get("visualization_samples", 160)))

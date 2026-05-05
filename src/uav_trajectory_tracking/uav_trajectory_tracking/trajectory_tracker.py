@@ -50,7 +50,7 @@ class TrajectoryTracker(Node):
         self.trajectory = ParametricTrajectory.from_config(config)
         self.control_rate_hz = float(config.get("control_rate_hz", 10.0))
         self.takeoff_warmup_s = float(config.get("takeoff_warmup_s", 1.5))
-        self.entry_acceptance_radius_m = float(config.get("entry_acceptance_radius_m", 0.35))
+        self.entry_acceptance_radius_m = float(config.get("entry_acceptance_radius_m", 0.1))
         self.entry_hold_s = float(config.get("entry_hold_s", 0.5))
         self.land_at_end = bool(config.get("land_at_end", True))
         self.loop_route = bool(config.get("loop_route", False))
