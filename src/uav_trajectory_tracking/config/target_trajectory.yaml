@@ -16,9 +16,9 @@ curve:
     cx: -1.0
     cy: 2.0
     cz: -5.0
-    ax: 0.9
-    ay: 6.0
-    az: 1.1
+    ax: 1.3
+    ay: 7.0
+    az: 1.2
     period: 48.0
   position:
     x: cx + ax * cos(tau * t / period)

@@ -6,7 +6,7 @@ SIM_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PX4_ROOT="${PX4_ROOT:-/home/zk/PX4-Autopilot}"
 PYTHON_VENV="${PYTHON_VENV:-/home/zk/px4-venv}"
 PX4_GZ_WORLD="${PX4_GZ_WORLD:-trajectory_tracking}"
-TRAJECTORY_FILE="${TRAJECTORY_FILE:-${SIM_ROOT}/src/uav_trajectory_tracking/config/trajectory_figure8.yaml}"
+TRAJECTORY_FILE="${TRAJECTORY_FILE:-${SIM_ROOT}/src/uav_trajectory_tracking/config/trajectory_hold.yaml}"
 WIND_FILE="${WIND_FILE:-${SIM_ROOT}/src/uav_trajectory_tracking/config/wind.yaml}"
 SHOW_TRAJECTORY_VISUALS="${SHOW_TRAJECTORY_VISUALS:-false}"
 
