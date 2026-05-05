@@ -5,8 +5,7 @@ trajectory_type: parametric
 
 control_rate_hz: 50.0
 takeoff_warmup_s: 1.5
-entry_acceptance_radius_m: 0.1
-entry_hold_s: 0.8
+acceptance_radius_m: 0.1
 land_at_end: true
 loop_route: false
 yaw_mode: face_velocity
@@ -28,10 +27,5 @@ curve:
     x: ax * 2.0 * tau / period * cos(2.0 * tau * t / period)
     y: ay * tau / period * cos(tau * t / period)
     z: 0.0
-
-return:
-  enabled: true
-  point: [0.0, 0.0, -5.0]
-  acceptance_radius_m: 0.1
 
 visualization_samples: 180

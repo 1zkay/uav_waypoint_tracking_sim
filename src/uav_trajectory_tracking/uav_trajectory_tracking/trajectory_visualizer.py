@@ -42,7 +42,7 @@ class TrajectoryVisualizer(Node):
         config = self._load_config()
         self.trajectory = ParametricTrajectory.from_config(config)
         self.planned_points = self.trajectory.sample_points(include_return=True)
-        self.acceptance_radius_m = self.trajectory.return_acceptance_radius_m
+        self.acceptance_radius_m = self.trajectory.acceptance_radius_m
         self.frame_id = self.get_parameter("frame_id").get_parameter_value().string_value
         self.path_min_distance_m = float(
             self.get_parameter("vehicle_path_min_distance_m").get_parameter_value().double_value

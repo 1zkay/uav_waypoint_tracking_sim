@@ -26,6 +26,7 @@ STAGE_ENTRY = 0
 STAGE_TRAJECTORY = 1
 STAGE_RETURN = 2
 STAGE_FINISHED = 3
+ENTRY_HOLD_S = 0.5
 
 
 class TrajectoryTracker(Node):
@@ -50,17 +51,17 @@ class TrajectoryTracker(Node):
         self.trajectory = ParametricTrajectory.from_config(config)
         self.control_rate_hz = float(config.get("control_rate_hz", 10.0))
         self.takeoff_warmup_s = float(config.get("takeoff_warmup_s", 1.5))
-        self.entry_acceptance_radius_m = float(config.get("entry_acceptance_radius_m", 0.1))
-        self.entry_hold_s = float(config.get("entry_hold_s", 0.5))
         self.land_at_end = bool(config.get("land_at_end", True))
         self.loop_route = bool(config.get("loop_route", False))
         self.yaw_mode = str(config.get("yaw_mode", "face_velocity"))
         self.entry_point = self.trajectory.sample(0.0)[0]
+        self.final_point = self.trajectory.sample(self.trajectory.duration_s)[0]
 
         self.current_stage_index = STAGE_ENTRY
         self.entry_reached_since_us: int | None = None
         self.trajectory_start_us: int | None = None
         self.returning = False
+        self.return_target: Point3 | None = None
         self.return_reached_since_us: int | None = None
         self.finished = False
         self.setpoint_counter = 0
@@ -138,7 +139,7 @@ class TrajectoryTracker(Node):
             f"duration={self.trajectory.duration_s:.2f} s, "
             f"rate={self.control_rate_hz:.1f} Hz, "
             f"entry=({self.entry_point[0]:.2f}, {self.entry_point[1]:.2f}, {self.entry_point[2]:.2f}) m, "
-            f"entry_radius={self.entry_acceptance_radius_m:.2f} m, "
+            f"acceptance_radius={self.trajectory.acceptance_radius_m:.2f} m, "
             f"velocity_feedforward={self.trajectory.has_velocity}"
         )
         self.get_logger().info(
@@ -222,18 +223,18 @@ class TrajectoryTracker(Node):
         if self._elapsed_s(now_us) < self.trajectory.duration_s:
             return
 
+        self.returning = True
+        self.return_target = self.trajectory.return_point or self.final_point
+        self.return_reached_since_us = None
+        self.current_stage_index = STAGE_RETURN
         if self.trajectory.return_point is not None:
-            self.returning = True
-            self.return_reached_since_us = None
-            self.current_stage_index = STAGE_RETURN
             self.get_logger().info("Parametric trajectory complete; flying to return point.")
-            return
-
-        self._finish_trajectory(now_us)
+        else:
+            self.get_logger().info("Parametric trajectory complete; settling at final point.")
 
     def _advance_entry_if_needed(self, now_us: int) -> None:
         distance = self._distance_to_point(self.entry_point)
-        if distance > self.entry_acceptance_radius_m:
+        if distance > self.trajectory.acceptance_radius_m:
             self.entry_reached_since_us = None
             return
 
@@ -242,7 +243,7 @@ class TrajectoryTracker(Node):
             self.get_logger().info(f"Reached trajectory entry point (distance={distance:.2f} m).")
             return
 
-        if now_us - self.entry_reached_since_us < int(self.entry_hold_s * 1_000_000):
+        if now_us - self.entry_reached_since_us < int(ENTRY_HOLD_S * 1_000_000):
             return
 
         self.trajectory_start_us = now_us
@@ -250,9 +251,9 @@ class TrajectoryTracker(Node):
         self.get_logger().info("Started parametric trajectory from entry point.")
 
     def _advance_return_if_needed(self, now_us: int) -> None:
-        assert self.trajectory.return_point is not None
-        distance = self._distance_to_point(self.trajectory.return_point)
-        if distance > self.trajectory.return_acceptance_radius_m:
+        assert self.return_target is not None
+        distance = self._distance_to_point(self.return_target)
+        if distance > self.trajectory.acceptance_radius_m:
             self.return_reached_since_us = None
             return
 
@@ -334,8 +335,8 @@ class TrajectoryTracker(Node):
             yaw = configured_yaw if configured_yaw is not None else self._yaw_to_point(self.entry_point)
             return self.entry_point, None, yaw
 
-        if self.returning and self.trajectory.return_point is not None:
-            target = self.trajectory.return_point
+        if self.returning and self.return_target is not None:
+            target = self.return_target
             return target, None, self._yaw_to_point(target)
 
         position, velocity, configured_yaw = self.trajectory.sample(self._trajectory_time_s(now_us))

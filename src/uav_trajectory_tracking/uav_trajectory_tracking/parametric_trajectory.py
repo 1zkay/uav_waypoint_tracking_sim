@@ -85,7 +85,7 @@ class ParametricTrajectory:
     velocity: tuple[ScalarExpression, ScalarExpression, ScalarExpression] | None
     yaw: ScalarExpression | None
     return_point: Point3 | None
-    return_acceptance_radius_m: float
+    acceptance_radius_m: float
     visualization_samples: int
 
     @classmethod
@@ -136,10 +136,7 @@ class ParametricTrajectory:
         if return_enabled:
             return_point = parse_point(required(return_config, "point", "return"), "return.point")
 
-        return_acceptance_radius_m = positive_float(
-            return_config.get("acceptance_radius_m", config.get("acceptance_radius_m", 0.1)),
-            "return.acceptance_radius_m",
-        )
+        acceptance_radius_m = positive_float(config.get("acceptance_radius_m", 0.1), "acceptance_radius_m")
         visualization_samples = max(2, int(config.get("visualization_samples", 160)))
 
         return cls(
@@ -149,7 +146,7 @@ class ParametricTrajectory:
             velocity=velocity,
             yaw=yaw,
             return_point=return_point,
-            return_acceptance_radius_m=return_acceptance_radius_m,
+            acceptance_radius_m=acceptance_radius_m,
             visualization_samples=visualization_samples,
         )
 

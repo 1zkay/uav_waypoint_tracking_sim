@@ -90,7 +90,7 @@ cd /home/zk/uav_trajectory_tracking_sim
 也会默认把同一个主机 YAML 传给控制节点和 RViz 可视化节点。目标机启动脚本默认使用
 `target_trajectory.yaml`，当前轨迹是在主机悬停后云台视场内循环的小椭圆。
 轨迹控制采用 `entry -> trajectory -> return -> finished` 阶段：无人机先飞到曲线起点，
-满足 `entry_acceptance_radius_m` 并保持 `entry_hold_s` 后，才开始参数化时间 `t`，
+满足统一的 `acceptance_radius_m` 到达判定并短暂稳定后，才开始参数化时间 `t`，
 避免起飞追踪段破坏 8 字轨迹形状。
 默认 8 字轨迹的交叉点、起点和终点均为 `(0, 0, -5)`，因此 QGC 的水平轨迹不会包含额外的长距离进场线。
 
