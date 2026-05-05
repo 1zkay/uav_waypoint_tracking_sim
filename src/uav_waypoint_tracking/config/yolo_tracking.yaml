@@ -18,7 +18,7 @@ yolo_tracker:
     max_detections: 100
     # The node keeps only the newest camera frame and runs inference from a
     # worker thread. max_inference_hz=0 disables explicit rate limiting.
-    max_inference_hz: 30.0
+    max_inference_hz: 90.0
     classes: ""
     device: ""
 
