@@ -10,7 +10,12 @@ from cv_bridge import CvBridge, CvBridgeError
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import (
+    QoSDurabilityPolicy,
+    QoSHistoryPolicy,
+    QoSProfile,
+    QoSReliabilityPolicy,
+)
 from sensor_msgs.msg import Image
 from vision_msgs.msg import Detection2D, Detection2DArray, ObjectHypothesisWithPose
 
@@ -105,7 +110,7 @@ class YoloTracker(Node):
             Image,
             self.image_topic,
             self._image_callback,
-            qos_profile_sensor_data,
+            latest_reliable_image_qos(),
         )
 
         self._frame_condition = threading.Condition()
@@ -421,6 +426,15 @@ def parse_classes(value: str) -> list[int] | None:
     if not value:
         return None
     return [int(item.strip()) for item in value.split(",") if item.strip()]
+
+
+def latest_reliable_image_qos() -> QoSProfile:
+    return QoSProfile(
+        history=QoSHistoryPolicy.KEEP_LAST,
+        depth=1,
+        reliability=QoSReliabilityPolicy.RELIABLE,
+        durability=QoSDurabilityPolicy.VOLATILE,
+    )
 
 
 def main(args=None) -> None:

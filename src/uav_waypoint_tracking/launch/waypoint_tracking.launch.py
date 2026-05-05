@@ -33,6 +33,7 @@ def generate_launch_description():
     rviz_frame_id = LaunchConfiguration("rviz_frame_id")
 
     enable_camera_bridge = LaunchConfiguration("enable_camera_bridge")
+    camera_image_bridge_qos = LaunchConfiguration("camera_image_bridge_qos")
     camera_gazebo_topic = LaunchConfiguration("camera_gazebo_topic")
     camera_image_topic = LaunchConfiguration("camera_image_topic")
     camera_info_gazebo_topic = LaunchConfiguration("camera_info_gazebo_topic")
@@ -184,6 +185,14 @@ def generate_launch_description():
                 "enable_camera_bridge",
                 default_value="false",
                 description="Bridge the x500_0 Gazebo gimbal camera image to ROS 2.",
+            ),
+            DeclareLaunchArgument(
+                "camera_image_bridge_qos",
+                default_value="default",
+                description=(
+                    "QoS profile for ros_gz_image image_bridge. default keeps "
+                    "reliable delivery for large uncompressed image messages."
+                ),
             ),
             DeclareLaunchArgument(
                 "camera_gazebo_topic",
@@ -367,6 +376,7 @@ def generate_launch_description():
                 output="screen",
                 condition=IfCondition(enable_camera_bridge),
                 arguments=[camera_gazebo_topic],
+                parameters=[{"qos": camera_image_bridge_qos}],
                 remappings=[(camera_gazebo_topic, camera_image_topic)],
             ),
             Node(

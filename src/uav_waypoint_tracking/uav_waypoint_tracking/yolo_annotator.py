@@ -7,7 +7,12 @@ import rclpy
 from cv_bridge import CvBridge, CvBridgeError
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import (
+    QoSDurabilityPolicy,
+    QoSHistoryPolicy,
+    QoSProfile,
+    QoSReliabilityPolicy,
+)
 from sensor_msgs.msg import Image
 from vision_msgs.msg import Detection2D, Detection2DArray
 
@@ -74,7 +79,7 @@ class YoloAnnotator(Node):
             Image,
             self.image_topic,
             self._image_callback,
-            qos_profile_sensor_data,
+            latest_reliable_image_qos(),
         )
         self.annotated_pub = self.create_publisher(
             Image,
@@ -212,6 +217,15 @@ def draw_label(frame, label: str, x: int, y: int, color: tuple[int, int, int]) -
 
 def clamp_int(value: int, lower: int, upper: int) -> int:
     return max(lower, min(upper, value))
+
+
+def latest_reliable_image_qos() -> QoSProfile:
+    return QoSProfile(
+        history=QoSHistoryPolicy.KEEP_LAST,
+        depth=1,
+        reliability=QoSReliabilityPolicy.RELIABLE,
+        durability=QoSDurabilityPolicy.VOLATILE,
+    )
 
 
 def main(args=None) -> None:

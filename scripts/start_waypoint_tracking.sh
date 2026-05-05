@@ -9,9 +9,10 @@ RUN_ID="${RUN_ID:-}"
 PYTHON_VENV="${PYTHON_VENV:-/home/zk/px4-venv}"
 ENABLE_CAMERA_BRIDGE="${ENABLE_CAMERA_BRIDGE:-true}"
 ENABLE_YOLO_TRACKING="${ENABLE_YOLO_TRACKING:-true}"
-ENABLE_YOLO_ANNOTATION="${ENABLE_YOLO_ANNOTATION:-false}"
+ENABLE_YOLO_ANNOTATION="${ENABLE_YOLO_ANNOTATION:-true}"
 ENABLE_GIMBAL_TRACKING="${ENABLE_GIMBAL_TRACKING:-true}"
 ENABLE_GIMBAL_PERFORMANCE_MONITOR="${ENABLE_GIMBAL_PERFORMANCE_MONITOR:-${ENABLE_GIMBAL_TRACKING}}"
+CAMERA_IMAGE_BRIDGE_QOS="${CAMERA_IMAGE_BRIDGE_QOS:-default}"
 CAMERA_GAZEBO_TOPIC="${CAMERA_GAZEBO_TOPIC:-/world/waypoint_tracking/model/x500_0/link/camera_link/sensor/camera/image}"
 CAMERA_IMAGE_TOPIC="${CAMERA_IMAGE_TOPIC:-/x500_0/camera/image_raw}"
 CAMERA_INFO_GAZEBO_TOPIC="${CAMERA_INFO_GAZEBO_TOPIC:-/world/waypoint_tracking/model/x500_0/link/camera_link/sensor/camera/camera_info}"
@@ -75,6 +76,7 @@ add_launch_arg() {
 
 add_launch_arg "waypoints_file" "${WAYPOINTS_FILE}"
 add_launch_arg "enable_camera_bridge" "${ENABLE_CAMERA_BRIDGE}"
+add_launch_arg "camera_image_bridge_qos" "${CAMERA_IMAGE_BRIDGE_QOS}"
 add_launch_arg "enable_yolo_tracking" "${ENABLE_YOLO_TRACKING}"
 add_launch_arg "enable_yolo_annotation" "${ENABLE_YOLO_ANNOTATION}"
 add_launch_arg "enable_gimbal_tracking" "${ENABLE_GIMBAL_TRACKING}"
@@ -107,7 +109,7 @@ if [[ -n "${RUN_ID}" ]]; then
 fi
 
 echo "Launching waypoint tracker with ${WAYPOINTS_FILE}"
-echo "Camera bridge: $(launch_arg_value enable_camera_bridge "${ENABLE_CAMERA_BRIDGE}") $(launch_arg_value camera_gazebo_topic "${CAMERA_GAZEBO_TOPIC}") -> $(launch_arg_value camera_image_topic "${CAMERA_IMAGE_TOPIC}")"
+echo "Camera bridge: $(launch_arg_value enable_camera_bridge "${ENABLE_CAMERA_BRIDGE}") qos=$(launch_arg_value camera_image_bridge_qos "${CAMERA_IMAGE_BRIDGE_QOS}") $(launch_arg_value camera_gazebo_topic "${CAMERA_GAZEBO_TOPIC}") -> $(launch_arg_value camera_image_topic "${CAMERA_IMAGE_TOPIC}")"
 echo "CameraInfo bridge: $(launch_arg_value camera_info_gazebo_topic "${CAMERA_INFO_GAZEBO_TOPIC}") -> $(launch_arg_value camera_info_topic "${CAMERA_INFO_TOPIC}")"
 echo "YOLO tracking: $(launch_arg_value enable_yolo_tracking "${ENABLE_YOLO_TRACKING}") tracks=$(launch_arg_value yolo_tracks_topic "${YOLO_TRACKS_TOPIC}")"
 echo "YOLO annotation: $(launch_arg_value enable_yolo_annotation "${ENABLE_YOLO_ANNOTATION}") annotated=$(launch_arg_value yolo_tracks_annotated_image_topic "${YOLO_TRACKS_ANNOTATED_IMAGE_TOPIC}") max_hz=$(launch_arg_value yolo_annotation_max_publish_hz "${YOLO_ANNOTATION_MAX_PUBLISH_HZ}")"
