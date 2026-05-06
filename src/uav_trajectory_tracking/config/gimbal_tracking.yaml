@@ -55,7 +55,7 @@ gimbal_target_tracker:
 
     # Safety/diagnostic behavior.
     hold_last_command_on_loss: true
-    send_command_before_first_detection: false
+    send_command_before_first_detection: true
     search_enabled: true
     search_after_lost_s: 1.0
     local_search_duration_s: 8.0
