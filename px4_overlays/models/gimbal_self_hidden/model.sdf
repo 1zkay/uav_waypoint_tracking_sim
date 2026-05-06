@@ -272,7 +272,6 @@
           <horizontal_fov>2.0</horizontal_fov>
           <image>
             <format>R8G8B8</format>
-            <format>R8G8B8</format>
             <width>1280</width>
             <height>720</height>
           </image>
@@ -316,6 +315,14 @@
     </joint>
 
     <!-- Plugins -->
+    <plugin
+      filename="gz-sim-joint-state-publisher-system"
+      name="gz::sim::systems::JointStatePublisher">
+      <joint_name>cgo3_vertical_arm_joint</joint_name>
+      <joint_name>cgo3_camera_joint</joint_name>
+      <joint_name>cgo3_horizontal_arm_joint</joint_name>
+    </plugin>
+
     <plugin
       filename="gz-sim-joint-position-controller-system"
       name="gz::sim::systems::JointPositionController">

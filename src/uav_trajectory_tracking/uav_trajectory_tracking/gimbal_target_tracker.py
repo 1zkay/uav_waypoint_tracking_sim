@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 
@@ -10,7 +9,6 @@ import rclpy
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from geometry_msgs.msg import Vector3Stamped
 from px4_msgs.msg import (
-    GimbalDeviceAttitudeStatus,
     GimbalManagerSetAttitude,
     VehicleCommand,
     VehicleCommandAck,
@@ -24,7 +22,7 @@ from rclpy.qos import (
     ReliabilityPolicy,
     qos_profile_sensor_data,
 )
-from sensor_msgs.msg import CameraInfo
+from sensor_msgs.msg import CameraInfo, JointState
 from std_msgs.msg import Bool
 from vision_msgs.msg import Detection2D, Detection2DArray
 
@@ -77,8 +75,8 @@ class GimbalTargetTracker(Node):
         self.declare_parameter("detections_topic", "/x500_0/yolo/tracks")
         self.declare_parameter("camera_info_topic", "/x500_0/camera/camera_info")
         self.declare_parameter(
-            "gimbal_attitude_topic",
-            "/fmu/out/gimbal_device_attitude_status",
+            "gimbal_joint_state_topic",
+            "/x500_0/gimbal/joint_states",
         )
         self.declare_parameter("vehicle_command_topic", "/fmu/in/vehicle_command")
         self.declare_parameter(
@@ -136,7 +134,8 @@ class GimbalTargetTracker(Node):
         self.declare_parameter("source_system", 1)
         self.declare_parameter("source_component", 1)
         self.declare_parameter("gimbal_device_id", 0.0)
-        self.declare_parameter("yaw_frame", "vehicle")
+        self.declare_parameter("gimbal_yaw_joint_name", "cgo3_vertical_arm_joint")
+        self.declare_parameter("gimbal_pitch_joint_name", "cgo3_camera_joint")
         self.declare_parameter(
             "command_interface",
             self.COMMAND_INTERFACE_GIMBAL_MANAGER_SET_ATTITUDE,
@@ -162,7 +161,7 @@ class GimbalTargetTracker(Node):
         self.declare_parameter("max_tracking_cmd_actual_error_deg", 30.0)
         self.declare_parameter("tracking_cmd_actual_error_timeout_s", 0.5)
         self.declare_parameter("max_search_cmd_actual_error_deg", 30.0)
-        self.declare_parameter("use_gimbal_feedback", True)
+        self.declare_parameter("use_joint_feedback", True)
         self.declare_parameter("initialize_command_from_feedback", True)
         self.declare_parameter("configure_gimbal_manager", True)
         self.declare_parameter("configure_retry_period_s", 1.0)
@@ -170,8 +169,8 @@ class GimbalTargetTracker(Node):
 
         self.detections_topic = str(self.get_parameter("detections_topic").value)
         self.camera_info_topic = str(self.get_parameter("camera_info_topic").value)
-        self.gimbal_attitude_topic = str(
-            self.get_parameter("gimbal_attitude_topic").value
+        self.gimbal_joint_state_topic = str(
+            self.get_parameter("gimbal_joint_state_topic").value
         )
         self.vehicle_command_topic = str(
             self.get_parameter("vehicle_command_topic").value
@@ -255,8 +254,12 @@ class GimbalTargetTracker(Node):
         self.source_system = int(self.get_parameter("source_system").value)
         self.source_component = int(self.get_parameter("source_component").value)
         self.gimbal_device_id = float(self.get_parameter("gimbal_device_id").value)
-        self.yaw_frame = str(self.get_parameter("yaw_frame").value).strip().lower()
-        self.gimbal_manager_flags = float(self._gimbal_manager_flags())
+        self.gimbal_yaw_joint_name = str(
+            self.get_parameter("gimbal_yaw_joint_name").value
+        )
+        self.gimbal_pitch_joint_name = str(
+            self.get_parameter("gimbal_pitch_joint_name").value
+        )
         self.command_interface = (
             str(self.get_parameter("command_interface").value).strip().lower()
         )
@@ -315,9 +318,7 @@ class GimbalTargetTracker(Node):
             0.0,
             float(self.get_parameter("max_search_cmd_actual_error_deg").value),
         )
-        self.use_gimbal_feedback = bool(
-            self.get_parameter("use_gimbal_feedback").value
-        )
+        self.use_joint_feedback = bool(self.get_parameter("use_joint_feedback").value)
         self.initialize_command_from_feedback = bool(
             self.get_parameter("initialize_command_from_feedback").value
         )
@@ -338,7 +339,7 @@ class GimbalTargetTracker(Node):
         self.last_detections_msg_time_s: float | None = None
         self.target_missing_since_s: float | None = None
         self.last_update_time_s: float | None = None
-        self.last_gimbal_feedback_time_s: float | None = None
+        self.last_joint_feedback_time_s: float | None = None
         self.tracking_state = TrackingState.INITIALIZING
         self.search_start_time_s: float | None = None
         self.search_anchor_yaw_deg = self.cmd_yaw_deg
@@ -360,7 +361,7 @@ class GimbalTargetTracker(Node):
         self.warned_gimbal_configure_max_attempts = False
         self.camera_intrinsics = self._fallback_intrinsics()
         self.locked_track_id = self.target_track_id or None
-        self.warned_feedback_frame_mismatch = False
+        self.warned_missing_joint_feedback = False
 
         px4_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -400,10 +401,10 @@ class GimbalTargetTracker(Node):
             qos_profile_sensor_data,
         )
         self.create_subscription(
-            GimbalDeviceAttitudeStatus,
-            self.gimbal_attitude_topic,
-            self._gimbal_attitude_callback,
-            px4_qos,
+            JointState,
+            self.gimbal_joint_state_topic,
+            self._gimbal_joint_state_callback,
+            qos_profile_sensor_data,
         )
         self.create_subscription(
             VehicleCommandAck,
@@ -421,11 +422,11 @@ class GimbalTargetTracker(Node):
             "Gimbal target tracker ready: "
             f"detections={self.detections_topic}, "
             f"camera_info={self.camera_info_topic}, "
-            f"gimbal_attitude={self.gimbal_attitude_topic}, "
+            f"joint_state={self.gimbal_joint_state_topic}, "
             f"command_interface={self.command_interface}, "
             f"command={self.vehicle_command_topic}, ack={self.vehicle_command_ack_topic}, "
             f"set_attitude={self.gimbal_set_attitude_topic}, class={target_filter}, "
-            f"track={track_filter}, yaw_frame={self.yaw_frame}, "
+            f"track={track_filter}, "
             f"state={self.state_topic}, rate={self.control_rate_hz:.1f} Hz"
         )
 
@@ -462,32 +463,38 @@ class GimbalTargetTracker(Node):
             source="camera_info",
         )
 
-    def _gimbal_attitude_callback(self, msg: GimbalDeviceAttitudeStatus) -> None:
-        if not self.use_gimbal_feedback:
-            return
-        if self.gimbal_device_id and msg.gimbal_device_id != int(self.gimbal_device_id):
+    def _gimbal_joint_state_callback(self, msg: JointState) -> None:
+        if not self.use_joint_feedback:
             return
 
-        feedback_yaw_frame = self._feedback_yaw_frame(int(msg.device_flags))
-        if feedback_yaw_frame != self.yaw_frame:
-            if not self.warned_feedback_frame_mismatch:
+        positions = {
+            name: position
+            for name, position in zip(msg.name, msg.position, strict=False)
+        }
+        if (
+            self.gimbal_yaw_joint_name not in positions
+            or self.gimbal_pitch_joint_name not in positions
+        ):
+            if not self.warned_missing_joint_feedback:
                 self.get_logger().warn(
-                    "Ignoring gimbal attitude feedback because its yaw frame "
-                    f"is {feedback_yaw_frame!r}, but commands use {self.yaw_frame!r}"
+                    "Ignoring gimbal joint feedback because required joints "
+                    f"{self.gimbal_yaw_joint_name!r} and "
+                    f"{self.gimbal_pitch_joint_name!r} are not both present"
                 )
-                self.warned_feedback_frame_mismatch = True
+                self.warned_missing_joint_feedback = True
             return
 
-        _, pitch_deg, yaw_deg = quaternion_to_euler_deg(msg.q)
+        yaw_deg = math.degrees(float(positions[self.gimbal_yaw_joint_name]))
+        pitch_deg = math.degrees(float(positions[self.gimbal_pitch_joint_name]))
+        self.actual_yaw_deg = clamp(yaw_deg, self.min_yaw_deg, self.max_yaw_deg)
         self.actual_pitch_deg = clamp(
             pitch_deg,
             self.min_pitch_deg,
             self.max_pitch_deg,
         )
-        self.actual_yaw_deg = clamp(yaw_deg, self.min_yaw_deg, self.max_yaw_deg)
-        self.last_gimbal_feedback_time_s = self._now_s()
+        self.last_joint_feedback_time_s = self._now_s()
         self._initialize_command_from_feedback_if_needed()
-        self.warned_feedback_frame_mismatch = False
+        self.warned_missing_joint_feedback = False
 
     def _initialize_command_from_feedback_if_needed(self) -> None:
         if not self.initialize_command_from_feedback:
@@ -516,9 +523,7 @@ class GimbalTargetTracker(Node):
             return
 
         result = int(msg.result)
-        accepted_result = int(
-            getattr(VehicleCommandAck, "VEHICLE_CMD_RESULT_ACCEPTED", 0)
-        )
+        accepted_result = int(VehicleCommandAck.VEHICLE_CMD_RESULT_ACCEPTED)
         if result == accepted_result:
             if not self.gimbal_configure_accepted:
                 self.get_logger().info(
@@ -599,16 +604,6 @@ class GimbalTargetTracker(Node):
             return
         self.locked_track_id = None
 
-    def _gimbal_manager_flags(self) -> int:
-        if self.yaw_frame == "vehicle":
-            return 0
-        if self.yaw_frame == "earth":
-            return GimbalManagerSetAttitude.GIMBAL_MANAGER_FLAGS_YAW_LOCK
-        raise ValueError(
-            "yaw_frame must be 'vehicle' or 'earth'; "
-            f"got {self.yaw_frame!r}"
-        )
-
     def _validate_command_interface(self) -> None:
         valid_interfaces = {
             self.COMMAND_INTERFACE_GIMBAL_MANAGER_SET_ATTITUDE,
@@ -619,27 +614,6 @@ class GimbalTargetTracker(Node):
                 "command_interface must be one of "
                 f"{sorted(valid_interfaces)}; got {self.command_interface!r}"
             )
-
-    def _feedback_yaw_frame(self, device_flags: int) -> str:
-        has_vehicle_frame = bool(
-            device_flags & GimbalDeviceAttitudeStatus.DEVICE_FLAGS_YAW_IN_VEHICLE_FRAME
-        )
-        has_earth_frame = bool(
-            device_flags & GimbalDeviceAttitudeStatus.DEVICE_FLAGS_YAW_IN_EARTH_FRAME
-        )
-        if has_vehicle_frame and not has_earth_frame:
-            return "vehicle"
-        if has_earth_frame and not has_vehicle_frame:
-            return "earth"
-
-        # Backward-compatible MAVLink interpretation when neither explicit
-        # yaw-frame flag is present.
-        if not has_vehicle_frame and not has_earth_frame:
-            if device_flags & GimbalDeviceAttitudeStatus.DEVICE_FLAGS_YAW_LOCK:
-                return "earth"
-            return "vehicle"
-
-        return "invalid"
 
     @staticmethod
     def _best_hypothesis(detection: Detection2D) -> tuple[str, float]:
@@ -891,13 +865,13 @@ class GimbalTargetTracker(Node):
         self._set_search_pitch_target()
 
     def _search_anchor_yaw_deg(self, now_s: float) -> float:
-        if self._has_fresh_gimbal_feedback(now_s) and self.actual_yaw_deg is not None:
+        if self._has_fresh_joint_feedback(now_s) and self.actual_yaw_deg is not None:
             return self.actual_yaw_deg
         return self.cmd_yaw_deg
 
     def _search_anchor_pitch_deg(self, now_s: float) -> float:
         if (
-            self._has_fresh_gimbal_feedback(now_s)
+            self._has_fresh_joint_feedback(now_s)
             and self.actual_pitch_deg is not None
         ):
             return self.actual_pitch_deg
@@ -963,7 +937,7 @@ class GimbalTargetTracker(Node):
         if self.max_tracking_cmd_actual_error_deg <= 0.0:
             self._reset_tracking_gimbal_lag()
             return False
-        if not self._has_fresh_gimbal_feedback(now_s):
+        if not self._has_fresh_joint_feedback(now_s):
             self._reset_tracking_gimbal_lag()
             return False
 
@@ -991,7 +965,7 @@ class GimbalTargetTracker(Node):
     def _search_gimbal_lag_too_large(self, now_s: float) -> bool:
         if self.max_search_cmd_actual_error_deg <= 0.0:
             return False
-        if not self._has_fresh_gimbal_feedback(now_s):
+        if not self._has_fresh_joint_feedback(now_s):
             return False
 
         max_error_deg = self._cmd_actual_max_error_deg()
@@ -999,10 +973,10 @@ class GimbalTargetTracker(Node):
             return False
         return max_error_deg > self.max_search_cmd_actual_error_deg
 
-    def _has_fresh_gimbal_feedback(self, now_s: float) -> bool:
+    def _has_fresh_joint_feedback(self, now_s: float) -> bool:
         return (
-            self.last_gimbal_feedback_time_s is not None
-            and now_s - self.last_gimbal_feedback_time_s <= 1.0
+            self.last_joint_feedback_time_s is not None
+            and now_s - self.last_joint_feedback_time_s <= 1.0
         )
 
     def _cmd_actual_error_deg(
@@ -1174,10 +1148,10 @@ class GimbalTargetTracker(Node):
             if self.last_detections_msg_time_s is None
             else max(0.0, now_s - self.last_detections_msg_time_s)
         )
-        feedback_age_s = (
+        joint_feedback_age_s = (
             None
-            if self.last_gimbal_feedback_time_s is None
-            else max(0.0, now_s - self.last_gimbal_feedback_time_s)
+            if self.last_joint_feedback_time_s is None
+            else max(0.0, now_s - self.last_joint_feedback_time_s)
         )
         target_missing_duration_s = self._target_missing_duration_s(now_s)
         search_elapsed_s = (
@@ -1214,18 +1188,18 @@ class GimbalTargetTracker(Node):
         elif self.tracking_state is TrackingState.TRACKING_GIMBAL_LAG:
             status.level = DiagnosticStatus.WARN
             status.message = "tracking paused while gimbal catches up"
-        elif not self.use_gimbal_feedback:
+        elif not self.use_joint_feedback:
             status.level = DiagnosticStatus.OK
-            status.message = "gimbal feedback disabled"
-        elif feedback_age_s is None:
+            status.message = "gimbal joint feedback disabled"
+        elif joint_feedback_age_s is None:
             status.level = DiagnosticStatus.WARN
-            status.message = "waiting for gimbal feedback"
-        elif feedback_age_s > 1.0:
+            status.message = "waiting for gimbal joint feedback"
+        elif joint_feedback_age_s > 1.0:
             status.level = DiagnosticStatus.WARN
-            status.message = "gimbal feedback stale"
+            status.message = "gimbal joint feedback stale"
         else:
             status.level = DiagnosticStatus.OK
-            status.message = "gimbal feedback active"
+            status.message = "gimbal joint feedback active"
 
         status.values = [
             self._diagnostic_value("state", self.tracking_state.value),
@@ -1262,7 +1236,7 @@ class GimbalTargetTracker(Node):
                 "pitch_error_integral_deg_s",
                 self.pitch_error_integral_deg_s,
             ),
-            self._diagnostic_value("feedback_age_s", feedback_age_s),
+            self._diagnostic_value("joint_feedback_age_s", joint_feedback_age_s),
             self._diagnostic_value(
                 "command_initialized_from_feedback",
                 self.command_initialized_from_feedback,
@@ -1386,7 +1360,7 @@ class GimbalTargetTracker(Node):
         msg.origin_compid = self.source_component
         msg.target_system = self.target_system
         msg.target_component = self.target_component
-        msg.flags = int(self.gimbal_manager_flags)
+        msg.flags = 0
         msg.gimbal_device_id = int(self.gimbal_device_id)
         msg.q = euler_to_quaternion(
             0.0,
@@ -1412,7 +1386,7 @@ class GimbalTargetTracker(Node):
         msg.param2 = float(yaw_deg)
         msg.param3 = math.nan
         msg.param4 = math.nan
-        msg.param5 = self.gimbal_manager_flags
+        msg.param5 = 0.0
         msg.param6 = 0.0
         msg.param7 = self.gimbal_device_id
         msg.target_system = self.target_system
@@ -1458,29 +1432,6 @@ def squared_image_distance(a: SelectedDetection, b: SelectedDetection) -> float:
     dx = a.center_x - b.center_x
     dy = a.center_y - b.center_y
     return dx * dx + dy * dy
-
-
-def quaternion_to_euler_deg(
-    q: Sequence[float],
-) -> tuple[float, float, float]:
-    w, x, y, z = (float(q[0]), float(q[1]), float(q[2]), float(q[3]))
-
-    roll_rad = math.atan2(
-        2.0 * (w * x + y * z),
-        1.0 - 2.0 * (x * x + y * y),
-    )
-    pitch_sin = clamp(2.0 * (w * y - z * x), -1.0, 1.0)
-    pitch_rad = math.asin(pitch_sin)
-    yaw_rad = math.atan2(
-        2.0 * (w * z + x * y),
-        1.0 - 2.0 * (y * y + z * z),
-    )
-
-    return (
-        math.degrees(roll_rad),
-        math.degrees(pitch_rad),
-        math.degrees(yaw_rad),
-    )
 
 
 def euler_to_quaternion(

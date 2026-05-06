@@ -54,7 +54,10 @@ def generate_launch_description():
     enable_gimbal_tracking = LaunchConfiguration("enable_gimbal_tracking")
     gimbal_config_file = LaunchConfiguration("gimbal_config_file")
     gimbal_input_topic = LaunchConfiguration("gimbal_input_topic")
-    gimbal_attitude_topic = LaunchConfiguration("gimbal_attitude_topic")
+    gimbal_joint_state_gazebo_topic = LaunchConfiguration(
+        "gimbal_joint_state_gazebo_topic"
+    )
+    gimbal_joint_state_topic = LaunchConfiguration("gimbal_joint_state_topic")
     gimbal_set_attitude_topic = LaunchConfiguration("gimbal_set_attitude_topic")
     enable_gimbal_performance_monitor = LaunchConfiguration(
         "enable_gimbal_performance_monitor"
@@ -277,9 +280,14 @@ def generate_launch_description():
                 description="Detection2DArray topic consumed by gimbal_target_tracker.",
             ),
             DeclareLaunchArgument(
-                "gimbal_attitude_topic",
-                default_value="/fmu/out/gimbal_device_attitude_status",
-                description="PX4 gimbal device attitude feedback topic.",
+                "gimbal_joint_state_gazebo_topic",
+                default_value="/world/trajectory_tracking/model/x500_0/joint_state",
+                description="Gazebo joint state topic containing x500_0 gimbal joints.",
+            ),
+            DeclareLaunchArgument(
+                "gimbal_joint_state_topic",
+                default_value="/x500_0/gimbal/joint_states",
+                description="ROS 2 JointState topic consumed by gimbal_target_tracker.",
             ),
             DeclareLaunchArgument(
                 "gimbal_set_attitude_topic",
@@ -430,6 +438,23 @@ def generate_launch_description():
                 ],
             ),
             Node(
+                package="ros_gz_bridge",
+                executable="parameter_bridge",
+                name="x500_0_gimbal_joint_state_bridge",
+                namespace=node_namespace,
+                output="screen",
+                condition=IfCondition(enable_gimbal_tracking),
+                arguments=[
+                    [
+                        gimbal_joint_state_gazebo_topic,
+                        "@sensor_msgs/msg/JointState[gz.msgs.Model",
+                    ]
+                ],
+                remappings=[
+                    (gimbal_joint_state_gazebo_topic, gimbal_joint_state_topic)
+                ],
+            ),
+            Node(
                 package="uav_trajectory_tracking",
                 executable="gimbal_target_tracker",
                 name="gimbal_target_tracker",
@@ -441,7 +466,7 @@ def generate_launch_description():
                     {
                         "detections_topic": gimbal_input_topic,
                         "camera_info_topic": camera_info_topic,
-                        "gimbal_attitude_topic": gimbal_attitude_topic,
+                        "gimbal_joint_state_topic": gimbal_joint_state_topic,
                         "gimbal_set_attitude_topic": gimbal_set_attitude_topic,
                         "vehicle_command_topic": vehicle_command_topic,
                         "vehicle_command_ack_topic": vehicle_command_ack_topic,

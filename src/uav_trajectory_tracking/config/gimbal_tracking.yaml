@@ -47,8 +47,8 @@ gimbal_target_tracker:
 
     # PX4 gimbal manager command parameters that are not vehicle-specific.
     gimbal_device_id: 0.0
-    # vehicle: yaw relative to vehicle heading; earth: yaw relative to North.
-    yaw_frame: vehicle
+    gimbal_yaw_joint_name: cgo3_vertical_arm_joint
+    gimbal_pitch_joint_name: cgo3_camera_joint
     # Use the high-rate PX4 gimbal manager setpoint topic for continuous servoing.
     # vehicle_command remains available as a compatibility fallback.
     command_interface: gimbal_manager_set_attitude
@@ -74,7 +74,7 @@ gimbal_target_tracker:
     # During search, wait before advancing the scan if the gimbal has not
     # caught up to the current command. 0 disables this search watchdog.
     max_search_cmd_actual_error_deg: 30.0
-    use_gimbal_feedback: true
+    use_joint_feedback: true
     initialize_command_from_feedback: true
     configure_gimbal_manager: true
     configure_retry_period_s: 1.0

@@ -24,7 +24,7 @@ yolo_tracker(BoT-SORT) ──► /x500_0/yolo/tracks
         │                 gimbal_target_tracker
         │                    ▲         │
         │                    │         │
-        │     /fmu/out/gimbal_device_attitude_status
+        │     /x500_0/gimbal/joint_states
         │                              │
         │                              ▼
         ├────────────────► /fmu/in/gimbal_manager_set_attitude
@@ -84,7 +84,7 @@ ros2 run uav_trajectory_tracking gimbal_target_tracker \
   --ros-args \
   -p detections_topic:=/x500_0/yolo/tracks \
   -p camera_info_topic:=/x500_0/camera/camera_info \
-  -p gimbal_attitude_topic:=/fmu/out/gimbal_device_attitude_status \
+  -p gimbal_joint_state_topic:=/x500_0/gimbal/joint_states \
   -p gimbal_set_attitude_topic:=/fmu/in/gimbal_manager_set_attitude \
   -p vehicle_command_topic:=/fmu/in/vehicle_command
 ```
@@ -146,10 +146,11 @@ src/uav_trajectory_tracking/config/gimbal_tracking.yaml
 - `max_tracking_cmd_actual_error_deg`
 - `tracking_cmd_actual_error_timeout_s`
 - `max_search_cmd_actual_error_deg`
-- `yaw_frame`
 - `command_interface`
 - `hold_last_command_on_loss`
-- `use_gimbal_feedback`
+- `gimbal_yaw_joint_name`
+- `gimbal_pitch_joint_name`
+- `use_joint_feedback`
 - `initialize_command_from_feedback`
 - `configure_gimbal_manager`
 - `configure_retry_period_s`
@@ -179,7 +180,8 @@ GIMBAL_INPUT_TOPIC=/x500_0/yolo/tracks \
 - `ENABLE_GIMBAL_TRACKING`：是否启动视觉闭环云台跟踪，`start_trajectory_tracking.sh` 默认 `true`。
 - `YOLO_TRACKS_TOPIC`：`yolo_tracker` 发布的跟踪结果 topic。
 - `GIMBAL_INPUT_TOPIC`：`gimbal_target_tracker` 订阅的 `Detection2DArray` topic，默认等于 `YOLO_TRACKS_TOPIC`。
-- `GIMBAL_ATTITUDE_TOPIC`：云台真实姿态反馈 topic，默认 `/fmu/out/gimbal_device_attitude_status`。
+- `GIMBAL_JOINT_STATE_GAZEBO_TOPIC`：Gazebo 云台关节状态 topic，默认 `/world/trajectory_tracking/model/x500_0/joint_state`。
+- `GIMBAL_JOINT_STATE_TOPIC`：桥接后的 ROS `sensor_msgs/JointState` topic，默认 `/x500_0/gimbal/joint_states`。
 - `GIMBAL_SET_ATTITUDE_TOPIC`：云台高频 setpoint topic，默认 `/fmu/in/gimbal_manager_set_attitude`。
 - `CAMERA_INFO_TOPIC`：云台节点订阅的 ROS `sensor_msgs/CameraInfo` topic，默认 `/x500_0/camera/camera_info`。
 - `YOLO_TRACKING_CONFIG_FILE`：可选，自定义 YOLO/BoT-SORT 参数文件。
@@ -228,9 +230,9 @@ cmd_pitch = clamp(cmd_pitch + pitch_rate * dt, min_pitch, max_pitch)
 
 诊断话题 `/x500_0/gimbal_target_tracker/error` 中的 `vector.x/y` 现在分别表示 yaw/pitch 视线角误差，单位为 degree，`vector.z` 为目标置信度。
 
-`yaw_frame` 默认是 `vehicle`，节点在 PX4 ROS 2 / uORB 路径上发送 `flags=0`，使 yaw 按机体系解释；如需地理系 yaw，可改为 `earth`，节点会发送 `GIMBAL_MANAGER_FLAGS_YAW_LOCK`。当前 PX4 的 `gimbal_manager_set_attitude` 处理逻辑实际只用 `YAW_LOCK` 区分 yaw body frame 与 earth frame。
+节点在 PX4 ROS 2 / uORB 路径上固定发送 `flags=0`，使 yaw 按机体系解释。节点默认订阅 `/x500_0/gimbal/joint_states` 作为云台真实关节反馈；`cmd_yaw/cmd_pitch`、`actual_yaw/actual_pitch`、`min_yaw/max_yaw`、搜索中心和诊断量统一保持云台关节/机体系语义。实际反馈由 Gazebo `JointStatePublisher` 发布的 `cgo3_vertical_arm_joint` 和 `cgo3_camera_joint` 提供，再经 `ros_gz_bridge` 桥接到 ROS 2。
 
-节点默认订阅 `/fmu/out/gimbal_device_attitude_status`，并在反馈消息的 yaw frame 与当前 `yaw_frame` 配置一致时，把反馈四元数解析到 `actual_yaw/actual_pitch`。这两个反馈量不会在正常控制过程中覆盖 `cmd_yaw/cmd_pitch`，因此云台指令始终由控制器自身连续积分生成。启动阶段如果 `initialize_command_from_feedback=true` 且节点还没有发送过云台命令，第一次有效反馈会用来初始化 `cmd_yaw/cmd_pitch`，避免默认 `initial_*` 与真实云台角不一致造成首次 setpoint 跳变。当前 Gazebo 云台反馈按 vehicle frame 发布，因此默认 `yaw_frame: vehicle` 与反馈一致；如果不需要记录反馈，可将 `use_gimbal_feedback` 设为 `false`。
+关节反馈不会在正常控制过程中覆盖 `cmd_yaw/cmd_pitch`，因此云台指令始终由控制器自身连续积分生成。启动阶段如果 `initialize_command_from_feedback=true` 且节点还没有发送过云台命令，第一次有效关节反馈会用来初始化 `cmd_yaw/cmd_pitch`，避免默认 `initial_*` 与真实云台角不一致造成首次 setpoint 跳变。如果不需要记录反馈，可将 `use_joint_feedback` 设为 `false`。
 
 tracking 状态下 `actual_yaw/actual_pitch` 作为 watchdog 输入：如果 `cmd-actual` 最大偏差持续超过 `max_tracking_cmd_actual_error_deg` 且超过 `tracking_cmd_actual_error_timeout_s`，节点进入 `tracking_gimbal_lag`，暂停视觉误差积分和 `cmd` 更新，只继续发布当前 setpoint，等待云台真实姿态追上。这样可以防止视觉方向错误、反馈异常或云台执行滞后时 `cmd_yaw/cmd_pitch` 继续漂移。`max_tracking_cmd_actual_error_deg: 0` 可关闭该保护。
 
@@ -269,7 +271,7 @@ target_track_id 为空且 lock_target_track=true：自动锁定首次选中的 t
 
 ## 验证话题
 
-每个新终端执行 ROS 2 命令前都需要先加载本工作区环境，否则 `px4_msgs` 自定义消息无法解析，`ros2 topic echo /fmu/out/gimbal_device_attitude_status --once` 会报 `The message type 'px4_msgs/msg/GimbalDeviceAttitudeStatus' is invalid`：
+每个新终端执行 ROS 2 命令前都需要先加载本工作区环境，否则 `px4_msgs` 自定义消息无法解析，PX4 相关 topic 的 `ros2 topic echo` 可能会报消息类型无效：
 
 ```bash
 cd /home/zk/uav_trajectory_tracking_sim
@@ -291,8 +293,8 @@ ros2 topic list | rg 'x500_0/(camera|yolo|gimbal)'
 ros2 topic echo /x500_0/camera/image_raw --once
 ros2 topic echo /x500_0/camera/camera_info --once
 ros2 topic echo /x500_0/yolo/tracks --once
+ros2 topic echo /x500_0/gimbal/joint_states --once
 ros2 topic echo /fmu/in/gimbal_manager_set_attitude --once
-ros2 topic echo /fmu/out/gimbal_device_attitude_status --once
 ros2 topic echo /x500_0/gimbal_target_tracker/error --once
 ros2 topic echo /x500_0/gimbal_target_tracker/tracking_active --once
 ros2 topic echo /x500_0/gimbal_target_tracker/state --once
@@ -311,11 +313,11 @@ ros2 topic echo /x500_0/gimbal_target_tracker/state --once
 2. `gimbal_tracking.yaml` 中的 `target_class_id` 是否和 YOLO 输出的 `class_id` 完全一致。
 3. `gimbal_tracking.yaml` 中的 `target_track_id` 是否指定了当前不存在的 track id。
 4. `gimbal_tracking.yaml` 中的 `min_score` 是否过高，或 bbox 尺寸过滤是否把真实目标过滤掉。
-5. `/fmu/out/gimbal_device_attitude_status` 是否有云台姿态反馈。
+5. `/x500_0/gimbal/joint_states` 是否有 `cgo3_vertical_arm_joint` 和 `cgo3_camera_joint` 反馈。
 6. `/fmu/in/gimbal_manager_set_attitude` 是否持续有 `GimbalManagerSetAttitude`。
 7. `GIMBAL_INPUT_TOPIC` 是否与 `YOLO_TRACKS_TOPIC` 一致。
 
-如果 `ros2 topic echo /fmu/out/gimbal_device_attitude_status --once` 提示消息类型无效，优先检查当前终端是否已经 `source install/setup.bash`，并确认 `ros2 interface show px4_msgs/msg/GimbalDeviceAttitudeStatus` 能正常显示字段。
+如果 `ros2 topic echo /fmu/in/gimbal_manager_set_attitude --once` 提示消息类型无效，优先检查当前终端是否已经 `source install/setup.bash`，并确认 `ros2 interface show px4_msgs/msg/GimbalManagerSetAttitude` 能正常显示字段。
 
 ## 调参建议
 
