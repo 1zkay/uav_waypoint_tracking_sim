@@ -41,7 +41,7 @@ add_launch_arg() {
 
 add_launch_arg "node_namespace" "${TARGET_NODE_NAMESPACE}"
 add_launch_arg "trajectory_file" "${TRAJECTORY_FILE}"
-add_launch_arg "vehicle_status_topic" "${PX4_ROS_NAMESPACE}/fmu/out/vehicle_status_v1"
+add_launch_arg "vehicle_status_topic" "${PX4_ROS_NAMESPACE}/fmu/out/vehicle_status_v4"
 add_launch_arg "vehicle_local_position_topic" "${PX4_ROS_NAMESPACE}/fmu/out/vehicle_local_position_v1"
 add_launch_arg "vehicle_attitude_topic" "${PX4_ROS_NAMESPACE}/fmu/out/vehicle_attitude"
 add_launch_arg "vehicle_odometry_topic" "${PX4_ROS_NAMESPACE}/fmu/out/vehicle_odometry"

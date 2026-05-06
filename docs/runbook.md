@@ -6,7 +6,7 @@
 source /opt/ros/jazzy/setup.bash
 source /home/zk/uav_trajectory_tracking_sim/install/setup.bash
 ros2 topic list | rg '/fmu/'
-ros2 topic echo /fmu/out/vehicle_status_v1 --qos-reliability best_effort --qos-durability transient_local --once
+ros2 topic echo /fmu/out/vehicle_status_v4 --qos-reliability best_effort --qos-durability transient_local --once
 ros2 topic echo /fmu/out/vehicle_local_position_v1 --qos-reliability best_effort --qos-durability transient_local --once
 ```
 
@@ -32,7 +32,7 @@ ros2 topic echo /x500_0/yolo/tracks --once
 
 ```bash
 ros2 topic list | rg '/px4_1/fmu/'
-ros2 topic echo /px4_1/fmu/out/vehicle_status_v1 --qos-reliability best_effort --qos-durability transient_local --once
+ros2 topic echo /px4_1/fmu/out/vehicle_status_v4 --qos-reliability best_effort --qos-durability transient_local --once
 ros2 topic echo /target/trajectory_tracker/current_stage --once
 ```
 
@@ -71,7 +71,7 @@ TRAJECTORY_FILE=/home/zk/my_target_trajectory.yaml ./scripts/start_target_trajec
 1. 看不到 `/fmu/out/*`
 
 确认 `MicroXRCEAgent udp4 -p 8888` 已启动，并且 PX4 SITL 日志里 `uxrce_dds_client` 正常连接。
-当前 PX4 main 的部分输出话题带 `_v1` 后缀，tracker 默认订阅 `/fmu/out/vehicle_status_v1`
+当前 PX4 main 的版本化输出话题中，tracker 默认订阅 `/fmu/out/vehicle_status_v4`
 和 `/fmu/out/vehicle_local_position_v1`。
 
 2. 节点切不进 Offboard

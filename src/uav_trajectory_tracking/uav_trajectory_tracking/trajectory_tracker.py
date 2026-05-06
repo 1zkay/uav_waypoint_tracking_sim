@@ -36,7 +36,7 @@ class TrajectoryTracker(Node):
         super().__init__("trajectory_tracker")
 
         self.declare_parameter("trajectory_file", "")
-        self.declare_parameter("vehicle_status_topic", "/fmu/out/vehicle_status_v1")
+        self.declare_parameter("vehicle_status_topic", "/fmu/out/vehicle_status_v4")
         self.declare_parameter("vehicle_local_position_topic", "/fmu/out/vehicle_local_position_v1")
         self.declare_parameter("offboard_control_mode_topic", "/fmu/in/offboard_control_mode")
         self.declare_parameter("trajectory_setpoint_topic", "/fmu/in/trajectory_setpoint")

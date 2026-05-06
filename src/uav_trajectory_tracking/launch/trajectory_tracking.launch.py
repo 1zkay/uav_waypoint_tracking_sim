@@ -78,8 +78,8 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "vehicle_status_topic",
-                default_value="/fmu/out/vehicle_status_v1",
-                description="PX4 vehicle status topic. Current PX4 main publishes the _v1 topic.",
+                default_value="/fmu/out/vehicle_status_v4",
+                description="PX4 vehicle status topic. Current PX4 main publishes the _v4 topic.",
             ),
             DeclareLaunchArgument(
                 "vehicle_local_position_topic",

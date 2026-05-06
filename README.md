@@ -61,7 +61,7 @@ cd /home/zk/uav_trajectory_tracking_sim
 ./scripts/start_rviz.sh
 ```
 
-当前 PX4 main 在这台机器上发布的是 `/fmu/out/vehicle_status_v1` 和
+当前 PX4 main 在这台机器上发布的是 `/fmu/out/vehicle_status_v4` 和
 `/fmu/out/vehicle_local_position_v1`，启动文件默认已经使用这两个话题。
 `start_trajectory_tracking.sh` 会同时启动控制节点、RViz 可视化发布节点、相机桥接和 YOLO + BoT-SORT 跟踪节点。
 
@@ -283,7 +283,7 @@ LOG_ROOT=/home/zk/uav_logs RUN_ID=wind_3ms_figure8 ./scripts/start_trajectory_tr
 ```bash
 source /opt/ros/jazzy/setup.bash
 source /home/zk/uav_trajectory_tracking_sim/install/setup.bash
-ros2 topic info /fmu/out/vehicle_status_v1 --verbose
+ros2 topic info /fmu/out/vehicle_status_v4 --verbose
 ros2 topic echo /fmu/out/vehicle_local_position_v1 --qos-reliability best_effort --qos-durability transient_local --once
 ```
 
