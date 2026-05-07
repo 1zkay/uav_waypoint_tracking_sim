@@ -385,7 +385,7 @@ void merge_plot_files(string *plot_file_list,int num_missile,const char * title)
 	if(file_istream_list==0)
 		{cerr<<"*** Error: file_istream_list[] allocation failed *** \n";exit(1);}
 
-	ofstream fmerge("plot.asc");
+	ofstream fmerge(report_path("plot.asc").c_str());
 
 	for(i=0;i<num_missile;i++)
 	{
@@ -394,7 +394,7 @@ void merge_plot_files(string *plot_file_list,int num_missile,const char * title)
 	}
 
 	//determining number of lines to be stripped of ploti.asc, i=1,2,3...
-	ifstream fplot1("plot1.asc");
+	ifstream fplot1(plot_file_list[0].c_str());
 	fplot1.getline(line_clear,CHARL,'\n');
 	fplot1>>buff;
 	fplot1>>buff;
@@ -1524,7 +1524,7 @@ void merge_stat_files(string *stat_file_list,int num_missile,const char * title)
 	if(file_istream_list==0)
 		{cerr<<"*** Error: file_istream_list[] allocation failed *** \n";exit(1);}
 
-	ofstream fmerge("stat.asc");
+	ofstream fmerge(report_path("stat.asc").c_str());
 
 	for(i=0;i<num_missile;i++)
 	{
@@ -1533,7 +1533,7 @@ void merge_stat_files(string *stat_file_list,int num_missile,const char * title)
 	}
 
 	//determining number of lines to be stripped of stati.asc, i=1,2,3...
-	ifstream fstat1("stat1.asc");
+	ifstream fstat1(stat_file_list[0].c_str());
 	fstat1.getline(line_clear,CHARL,'\n');
 	fstat1>>buff;
 	fstat1>>buff;
@@ -1754,9 +1754,11 @@ void document_input(Document *doc_missile6,Document *doc_rocket5,Document *doc_a
 	fstream input1("input.asc");
 	if(!input1){cout<<" *** Error: cannot open 'input1.asc' file *** \n";exit(1);}
 
+	ensure_report_dir();
+
 	//opening new copy file
-	fstream fcopy("input_copy.asc");
-	if(!fcopy){cout<<" *** Error: cannot open 'input_copy.asc' file *** \n";exit(1);}
+	fstream fcopy(report_path("input_copy.asc").c_str(),ios::in|ios::out|ios::trunc);
+	if(!fcopy){cout<<" *** Error: cannot open '"<<report_path("input_copy.asc")<<"' file *** \n";exit(1);}
 
 	//copying 'input.asc' to 'input_copy.asc'
 	do{
@@ -2224,14 +2226,14 @@ void parse_plot_traj_csv(string *files, int num_ucav, bool merge, string type)
 		string file;
 		ofstream csv_file;
 		if(!merge){
-			file="plot"+n+".csv";
+			file=report_path("plot"+n+".csv");
 			csv_file.open(file.c_str(),ios::trunc);
 		}
 		else{
 			if(type=="plot")
-				file="plot.csv";
+				file=report_path("plot.csv");
 			else if(type=="traj")
-				file="traj.csv";
+				file=report_path("traj.csv");
 			if(i==0){
 				csv_file.open(file.c_str(),ios::trunc);
 			}

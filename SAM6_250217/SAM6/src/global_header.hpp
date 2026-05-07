@@ -18,9 +18,89 @@
 #include <fstream>
 #include <string>
 #include <cstring>
+#include <cerrno>
+#include <cstdlib>
+#include <iostream>
+#include <cstdio>
+#include <ctime>
+#include <sys/stat.h>
+#ifdef _WIN32
+#include <direct.h>
+#else
+#include <sys/types.h>
+#endif
 #include "utility_header.hpp"
 
 using namespace std;
+
+inline bool report_path_exists(const string &path)
+{
+#ifdef _WIN32
+	struct _stat info;
+	return _stat(path.c_str(),&info)==0;
+#else
+	struct stat info;
+	return stat(path.c_str(),&info)==0;
+#endif
+}
+
+inline string report_timestamp()
+{
+	time_t now=time(NULL);
+	tm local_time;
+#ifdef _WIN32
+	localtime_s(&local_time,&now);
+#else
+	localtime_r(&now,&local_time);
+#endif
+	char stamp[32];
+	strftime(stamp,sizeof(stamp),"%Y%m%d_%H%M%S",&local_time);
+	return string(stamp);
+}
+
+inline string make_report_dir()
+{
+	string base="reports/run_"+report_timestamp();
+	string candidate=base;
+	int index=1;
+	while(report_path_exists(candidate))
+	{
+		char suffix[16];
+		snprintf(suffix,sizeof(suffix),"_%02d",index++);
+		candidate=base+suffix;
+	}
+	return candidate;
+}
+
+inline string report_dir()
+{
+	static string dir=make_report_dir();
+	return dir;
+}
+
+inline string report_path(const string &filename)
+{
+	return report_dir()+"/"+filename;
+}
+
+inline void make_report_directory(const string &dir)
+{
+#ifdef _WIN32
+	if(_mkdir(dir.c_str())!=0 && errno!=EEXIST)
+#else
+	if(mkdir(dir.c_str(),0755)!=0 && errno!=EEXIST)
+#endif
+	{
+		cerr<<"*** Error: cannot create report directory '"<<dir<<"' ***\n";
+		exit(1);
+	}
+}
+
+inline void ensure_report_dir()
+{
+	make_report_directory("reports");
+	make_report_directory(report_dir());
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////

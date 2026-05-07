@@ -143,21 +143,20 @@ int main()
 	if(input.fail())
 	{cerr<<"*** Error: File stream 'input.asc' failed to open (check spelling) ***\n";exit(1);}
 
-	//creating an output stream object and opening 'tabout.asc' file
-	ofstream ftabout("tabout.asc");
-	if(!ftabout){cout<<" *** Error: cannot open 'tabout.asc' file *** \n";exit(1);}
+	ensure_report_dir();
+	cout<<" Reports directory: "<<report_dir()<<'\n';
 
-	//creating an output stream object and opening 'doc.asc' file
-	ofstream fdoc("doc.asc");
-	if(!fdoc){cout<<" *** Error: cannot open 'doc.asc' file *** \n";exit(1);}
+	//creating an output stream object and opening 'tabout.asc' in the report directory
+	ofstream ftabout(report_path("tabout.asc").c_str());
+	if(!ftabout){cout<<" *** Error: cannot open '"<<report_path("tabout.asc")<<"' file *** \n";exit(1);}
 
-	//creating an output stream object and opening 'traj.asc' file
-	ofstream ftraj("traj.asc");
-	if(!ftraj){cout<<" *** Error: cannot open 'traj.asc' file *** \n";exit(1);}
+	//creating an output stream object and opening 'doc.asc' in the report directory
+	ofstream fdoc(report_path("doc.asc").c_str());
+	if(!fdoc){cout<<" *** Error: cannot open '"<<report_path("doc.asc")<<"' file *** \n";exit(1);}
 
-	//creating file 'input_copy.asc' in local directory for use in 'document_input()'
-	ofstream fcopy("input_copy.asc");
-	if(!fcopy){cout<<" *** Error: cannot open 'input_copy.asc' file *** \n";exit(1);}
+	//creating an output stream object and opening 'traj.asc' in the report directory
+	ofstream ftraj(report_path("traj.asc").c_str());
+	if(!ftraj){cout<<" *** Error: cannot open '"<<report_path("traj.asc")<<"' file *** \n";exit(1);}
 
 	///////////////////////////////////////////////////////////////////////////
 	////////////////////////// Monte Carlo Loop ///////////////////////////////
@@ -322,7 +321,7 @@ int main()
 
 						//building names for plot files
 						sprintf(index,"%i",i+1);
-						plotiasc="plot"+string(index)+".asc"; //using Standard Library string constructor
+						plotiasc=report_path("plot"+string(index)+".asc"); //using Standard Library string constructor
 						plot_file_list[i]=plotiasc;
 						name=plotiasc.c_str(); //using string member function to convert to char array 
 
@@ -345,7 +344,7 @@ int main()
 
 						//building names for stat files
 						sprintf(index,"%i",i+1);
-						statiasc="stat"+string(index)+".asc"; //using Standard Library string constructor
+						statiasc=report_path("stat"+string(index)+".asc"); //using Standard Library string constructor
 						stat_file_list[i]=statiasc;
 						name=statiasc.c_str(); //using string member function to convert to char array 
 
@@ -462,7 +461,6 @@ int main()
 
 	//Close input file streams
 	input.close();
-	fcopy.close();
 	int f(0);
 
 	//Close file streams
@@ -499,7 +497,7 @@ int main()
 		if(strstr(options,"y_traj"))
 		{
 			string* trajs=new string[1];
-			trajs[0]="traj.asc";
+			trajs[0]=report_path("traj.asc");
 			parse_plot_traj_csv(trajs,1,1,"traj");  //always merge traj into one file
 			delete [] trajs;
 		}
