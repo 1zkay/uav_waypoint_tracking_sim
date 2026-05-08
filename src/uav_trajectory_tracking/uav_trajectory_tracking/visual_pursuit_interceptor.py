@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -27,10 +28,27 @@ from std_msgs.msg import Bool
 class InterceptorState:
     INITIALIZING = "initializing"
     TAKEOFF = "takeoff"
+    TRANSIT = "transit_to_hover"
     HOLD = "hold"
     ACQUIRING = "acquiring_target"
     PURSUIT = "pursuit"
     TARGET_LOST = "target_lost"
+
+
+Vector3 = tuple[float, float, float]
+Matrix3 = tuple[Vector3, Vector3, Vector3]
+
+
+@dataclass(frozen=True)
+class GimbalCameraKinematics:
+    """Body-to-camera optical axis model derived from the Gazebo SDF chain."""
+
+    mount_rpy_rad: Vector3
+    yaw_axis: Vector3
+    roll_axis: Vector3
+    pitch_axis: Vector3
+    sensor_rpy_rad: Vector3
+    optical_axis_sensor: Vector3
 
 
 class VisualPursuitInterceptor(Node):
@@ -107,9 +125,44 @@ class VisualPursuitInterceptor(Node):
         self.gimbal_pitch_joint_name = str(
             config.get("gimbal_pitch_joint_name", "cgo3_camera_joint")
         )
+        self.gimbal_roll_joint_name = str(
+            config.get("gimbal_roll_joint_name", "cgo3_horizontal_arm_joint")
+        )
         self.gimbal_yaw_sign = float(config.get("gimbal_yaw_sign", 1.0))
         self.gimbal_pitch_sign = float(config.get("gimbal_pitch_sign", 1.0))
-        self.min_forward_component = float(config.get("min_forward_component", 0.05))
+        self.gimbal_roll_sign = float(config.get("gimbal_roll_sign", 1.0))
+        self.min_body_forward_component = float(
+            config.get(
+                "min_body_forward_component",
+                config.get("min_forward_component", 0.0),
+            )
+        )
+        self.gimbal_kinematics = GimbalCameraKinematics(
+            mount_rpy_rad=parse_vector3(
+                config.get("gimbal_mount_rpy_rad", [0.0, 0.0, math.pi]),
+                "gimbal_mount_rpy_rad",
+            ),
+            yaw_axis=parse_unit_vector3(
+                config.get("gimbal_yaw_axis", [0.0, 0.0, -1.0]),
+                "gimbal_yaw_axis",
+            ),
+            roll_axis=parse_unit_vector3(
+                config.get("gimbal_roll_axis", [-1.0, 0.0, 0.0]),
+                "gimbal_roll_axis",
+            ),
+            pitch_axis=parse_unit_vector3(
+                config.get("gimbal_pitch_axis", [0.0, 1.0, 0.0]),
+                "gimbal_pitch_axis",
+            ),
+            sensor_rpy_rad=parse_vector3(
+                config.get("camera_sensor_rpy_rad", [0.0, 0.0, math.pi]),
+                "camera_sensor_rpy_rad",
+            ),
+            optical_axis_sensor=parse_unit_vector3(
+                config.get("camera_optical_axis_sensor", [1.0, 0.0, 0.0]),
+                "camera_optical_axis_sensor",
+            ),
+        )
 
         self.target_system = int(self.get_parameter("target_system").value)
         self.target_component = int(self.get_parameter("target_component").value)
@@ -125,10 +178,11 @@ class VisualPursuitInterceptor(Node):
         self.last_tracking_true_time_s: float | None = None
         self.gimbal_yaw_rad: float | None = None
         self.gimbal_pitch_rad: float | None = None
+        self.gimbal_roll_rad: float | None = None
         self.last_gimbal_feedback_time_s: float | None = None
-        self.hold_position: tuple[float, float, float] | None = (
-            self.initial_hover_position
-        )
+        self.takeoff_position: tuple[float, float, float] | None = None
+        self.takeoff_altitude_reached = False
+        self.hold_position: tuple[float, float, float] | None = None
         self.initial_hover_reached = False
         self.state = InterceptorState.INITIALIZING
         self.previous_state = InterceptorState.INITIALIZING
@@ -218,6 +272,7 @@ class VisualPursuitInterceptor(Node):
             f"{self.initial_hover_position[2]:.2f}) m NED, "
             f"speed={self.pursuit_speed_mps:.2f} m/s, "
             f"gimbal_joints=({self.gimbal_yaw_joint_name}, {self.gimbal_pitch_joint_name}), "
+            f"roll_joint={self.gimbal_roll_joint_name}, "
             f"target_system={self.target_system}"
         )
 
@@ -276,6 +331,9 @@ class VisualPursuitInterceptor(Node):
         self.gimbal_pitch_rad = self.gimbal_pitch_sign * float(
             positions[self.gimbal_pitch_joint_name]
         )
+        self.gimbal_roll_rad = self.gimbal_roll_sign * float(
+            positions.get(self.gimbal_roll_joint_name, 0.0)
+        )
         self.last_gimbal_feedback_time_s = self._now_s()
 
     def _timer_callback(self) -> None:
@@ -304,8 +362,25 @@ class VisualPursuitInterceptor(Node):
             self.state = InterceptorState.INITIALIZING
             return False
 
-        if not self.initial_hover_reached:
+        if not self.takeoff_altitude_reached:
+            self._capture_takeoff_position_if_needed()
             self.state = InterceptorState.TAKEOFF
+            if (
+                self.takeoff_position is not None
+                and abs(
+                    float(self.vehicle_local_position.z)
+                    - self.takeoff_position[2]
+                )
+                <= self.hover_acceptance_radius_m
+            ):
+                self.takeoff_altitude_reached = True
+                self.hold_position = self.initial_hover_position
+                self.state = InterceptorState.TRANSIT
+            return False
+
+        if not self.initial_hover_reached:
+            self.state = InterceptorState.TRANSIT
+            self.hold_position = self.initial_hover_position
             if (
                 self._distance_to(self.initial_hover_position)
                 <= self.hover_acceptance_radius_m
@@ -376,6 +451,22 @@ class VisualPursuitInterceptor(Node):
             float(self.vehicle_local_position.z),
         )
 
+    def _capture_takeoff_position_if_needed(self) -> None:
+        if self.takeoff_position is not None:
+            return
+        if (
+            self.vehicle_local_position is None
+            or not self.vehicle_local_position.xy_valid
+            or not self.vehicle_local_position.z_valid
+        ):
+            return
+        self.takeoff_position = (
+            float(self.vehicle_local_position.x),
+            float(self.vehicle_local_position.y),
+            self.initial_hover_position[2],
+        )
+        self.hold_position = self.takeoff_position
+
     def _distance_to(self, target: tuple[float, float, float]) -> float:
         assert self.vehicle_local_position is not None
         dx = float(self.vehicle_local_position.x) - target[0]
@@ -405,6 +496,7 @@ class VisualPursuitInterceptor(Node):
         if (
             self.gimbal_yaw_rad is None
             or self.gimbal_pitch_rad is None
+            or self.gimbal_roll_rad is None
             or self.last_gimbal_feedback_time_s is None
         ):
             return False
@@ -436,10 +528,17 @@ class VisualPursuitInterceptor(Node):
         assert self.vehicle_attitude is not None
         assert self.gimbal_yaw_rad is not None
         assert self.gimbal_pitch_rad is not None
+        assert self.gimbal_roll_rad is not None
 
-        los_body = gimbal_angles_to_body_los(
+        los_body_raw = gimbal_angles_to_body_los(
             self.gimbal_yaw_rad,
+            self.gimbal_roll_rad,
             self.gimbal_pitch_rad,
+            self.gimbal_kinematics,
+        )
+        los_body = enforce_forward_component(
+            los_body_raw,
+            self.min_body_forward_component,
         )
         los_ned = normalize(
             rotate_body_to_ned(
@@ -447,7 +546,6 @@ class VisualPursuitInterceptor(Node):
                 los_body,
             )
         )
-        los_ned = enforce_forward_component(los_ned, self.min_forward_component)
         target_velocity_ned = limit_vertical_speed(
             scale(los_ned, self.pursuit_speed_mps),
             self.max_vertical_speed_mps,
@@ -479,6 +577,9 @@ class VisualPursuitInterceptor(Node):
         self.last_velocity_ned = velocity_ned
 
     def _publish_hold_setpoint(self, now_us: int) -> None:
+        if self.takeoff_position is None:
+            self._capture_takeoff_position_if_needed()
+
         if (
             self.vehicle_local_position is not None
             and self.vehicle_local_position.xy_valid
@@ -588,7 +689,14 @@ class VisualPursuitInterceptor(Node):
         status.values = [
             diagnostic_value("state", self.state),
             diagnostic_value("pursuing", pursuing),
+            diagnostic_value("takeoff_altitude_reached", self.takeoff_altitude_reached),
+            diagnostic_value("takeoff_x_m", point_value(self.takeoff_position, 0)),
+            diagnostic_value("takeoff_y_m", point_value(self.takeoff_position, 1)),
+            diagnostic_value("takeoff_z_m", point_value(self.takeoff_position, 2)),
             diagnostic_value("initial_hover_reached", self.initial_hover_reached),
+            diagnostic_value("hold_x_m", point_value(self.hold_position, 0)),
+            diagnostic_value("hold_y_m", point_value(self.hold_position, 1)),
+            diagnostic_value("hold_z_m", point_value(self.hold_position, 2)),
             diagnostic_value("tracking_active", self.tracking_active),
             diagnostic_value(
                 "tracking_confirmed",
@@ -604,6 +712,11 @@ class VisualPursuitInterceptor(Node):
             ),
             diagnostic_value("gimbal_yaw_deg", degrees_or_none(self.gimbal_yaw_rad)),
             diagnostic_value("gimbal_pitch_deg", degrees_or_none(self.gimbal_pitch_rad)),
+            diagnostic_value("gimbal_roll_deg", degrees_or_none(self.gimbal_roll_rad)),
+            diagnostic_value(
+                "min_body_forward_component",
+                self.min_body_forward_component,
+            ),
             diagnostic_value("los_body_x", self.last_los_body[0]),
             diagnostic_value("los_body_y", self.last_los_body[1]),
             diagnostic_value("los_body_z", self.last_los_body[2]),
@@ -648,15 +761,102 @@ class VisualPursuitInterceptor(Node):
 
 def gimbal_angles_to_body_los(
     yaw_rad: float,
+    roll_rad: float,
     pitch_rad: float,
+    kinematics: GimbalCameraKinematics,
 ) -> tuple[float, float, float]:
-    return normalize(
-        (
-            math.cos(pitch_rad) * math.cos(yaw_rad),
-            math.cos(pitch_rad) * math.sin(yaw_rad),
-            -math.sin(pitch_rad),
-        )
+    rotation_gazebo_base_to_sensor = matmul3(
+        rotation_from_rpy(*kinematics.mount_rpy_rad),
+        matmul3(
+            rotation_around_axis(kinematics.yaw_axis, yaw_rad),
+            matmul3(
+                rotation_around_axis(kinematics.roll_axis, roll_rad),
+                matmul3(
+                    rotation_around_axis(kinematics.pitch_axis, pitch_rad),
+                    rotation_from_rpy(*kinematics.sensor_rpy_rad),
+                ),
+            ),
+        ),
     )
+    los_gazebo_base = matvec3(
+        rotation_gazebo_base_to_sensor,
+        kinematics.optical_axis_sensor,
+    )
+    return normalize(gazebo_flu_to_px4_frd(los_gazebo_base))
+
+
+def gazebo_flu_to_px4_frd(vector: Vector3) -> Vector3:
+    return (vector[0], -vector[1], -vector[2])
+
+
+def rotation_from_rpy(
+    roll_rad: float,
+    pitch_rad: float,
+    yaw_rad: float,
+) -> Matrix3:
+    return matmul3(
+        rotation_z(yaw_rad),
+        matmul3(rotation_y(pitch_rad), rotation_x(roll_rad)),
+    )
+
+
+def rotation_x(angle_rad: float) -> Matrix3:
+    c = math.cos(angle_rad)
+    s = math.sin(angle_rad)
+    return ((1.0, 0.0, 0.0), (0.0, c, -s), (0.0, s, c))
+
+
+def rotation_y(angle_rad: float) -> Matrix3:
+    c = math.cos(angle_rad)
+    s = math.sin(angle_rad)
+    return ((c, 0.0, s), (0.0, 1.0, 0.0), (-s, 0.0, c))
+
+
+def rotation_z(angle_rad: float) -> Matrix3:
+    c = math.cos(angle_rad)
+    s = math.sin(angle_rad)
+    return ((c, -s, 0.0), (s, c, 0.0), (0.0, 0.0, 1.0))
+
+
+def rotation_around_axis(axis: Vector3, angle_rad: float) -> Matrix3:
+    ux, uy, uz = normalize(axis)
+    c = math.cos(angle_rad)
+    s = math.sin(angle_rad)
+    one_minus_c = 1.0 - c
+    return (
+        (
+            c + ux * ux * one_minus_c,
+            ux * uy * one_minus_c - uz * s,
+            ux * uz * one_minus_c + uy * s,
+        ),
+        (
+            uy * ux * one_minus_c + uz * s,
+            c + uy * uy * one_minus_c,
+            uy * uz * one_minus_c - ux * s,
+        ),
+        (
+            uz * ux * one_minus_c - uy * s,
+            uz * uy * one_minus_c + ux * s,
+            c + uz * uz * one_minus_c,
+        ),
+    )
+
+
+def matmul3(left: Matrix3, right: Matrix3) -> Matrix3:
+    return tuple(
+        tuple(
+            sum(left[row][index] * right[index][col] for index in range(3))
+            for col in range(3)
+        )
+        for row in range(3)
+    )  # type: ignore[return-value]
+
+
+def matvec3(matrix: Matrix3, vector: Vector3) -> Vector3:
+    return tuple(
+        sum(matrix[row][col] * vector[col] for col in range(3))
+        for row in range(3)
+    )  # type: ignore[return-value]
 
 
 def rotate_body_to_ned(
@@ -722,10 +922,14 @@ def limit_vector_delta(
 
 
 def normalize(vector: tuple[float, float, float]) -> tuple[float, float, float]:
-    norm = math.sqrt(vector[0] ** 2 + vector[1] ** 2 + vector[2] ** 2)
+    norm = vector_norm(vector)
     if norm <= 1e-9:
         return (1.0, 0.0, 0.0)
     return (vector[0] / norm, vector[1] / norm, vector[2] / norm)
+
+
+def vector_norm(vector: Vector3) -> float:
+    return math.sqrt(vector[0] ** 2 + vector[1] ** 2 + vector[2] ** 2)
 
 
 def scale(vector: tuple[float, float, float], scalar: float) -> tuple[float, float, float]:
@@ -752,8 +956,26 @@ def parse_point(value: Any, name: str) -> tuple[float, float, float]:
     return (float(value[0]), float(value[1]), float(value[2]))
 
 
+def parse_vector3(value: Any, name: str) -> Vector3:
+    if not isinstance(value, list | tuple) or len(value) != 3:
+        raise ValueError(f"{name} must be [x, y, z].")
+    return (float(value[0]), float(value[1]), float(value[2]))
+
+
+def parse_unit_vector3(value: Any, name: str) -> Vector3:
+    vector = parse_vector3(value, name)
+    norm = vector_norm(vector)
+    if norm <= 1e-9:
+        raise ValueError(f"{name} must not be a zero vector.")
+    return (vector[0] / norm, vector[1] / norm, vector[2] / norm)
+
+
 def degrees_or_none(value: float | None) -> float | None:
     return None if value is None else math.degrees(value)
+
+
+def point_value(point: tuple[float, float, float] | None, index: int) -> float | None:
+    return None if point is None else point[index]
 
 
 def diagnostic_value(key: str, value: bool | float | str | None) -> KeyValue:

@@ -2,14 +2,14 @@
 # The pursuit direction comes from the body-relative gimbal camera optical axis.
 frame: NED
 
-control_rate_hz: 50.0
+control_rate_hz: 30
 takeoff_warmup_s: 1.5
 initial_hover_position_ned: [1.0, 2.0, -5.0]
-hover_acceptance_radius_m: 0.1
+hover_acceptance_radius_m: 0.15
 
 pursuit_speed_mps: 1.2
-max_vertical_speed_mps: 0.5
-max_pursuit_accel_mps2: 0.5
+max_vertical_speed_mps: 1
+max_pursuit_accel_mps2: 1
 
 tracking_confirm_s: 1.0
 tracking_loss_grace_s: 1.0
@@ -20,6 +20,23 @@ yaw_mode: face_los
 
 gimbal_yaw_joint_name: cgo3_vertical_arm_joint
 gimbal_pitch_joint_name: cgo3_camera_joint
+gimbal_roll_joint_name: cgo3_horizontal_arm_joint
 gimbal_yaw_sign: 1.0
 gimbal_pitch_sign: 1.0
-min_forward_component: 0.05
+gimbal_roll_sign: 1.0
+
+# Camera optical-axis kinematics, matching px4_overlays/models/* SDF:
+# - PX4 body frame is FRD; Gazebo model/link frame is FLU.
+# - x500_gimbal_self_filtered mounts gimbal_self_hidden with yaw=pi.
+# - Gazebo rendering camera sensors use +X as the forward/boresight axis.
+# - The camera sensor pose under camera_link has yaw=pi.
+gimbal_mount_rpy_rad: [0.0, 0.0, 3.141592653589793]
+gimbal_yaw_axis: [0.0, 0.0, -1.0]
+gimbal_roll_axis: [-1.0, 0.0, 0.0]
+gimbal_pitch_axis: [0.0, 1.0, 0.0]
+camera_sensor_rpy_rad: [0.0, 0.0, 3.141592653589793]
+camera_optical_axis_sensor: [1.0, 0.0, 0.0]
+
+# Keep strict camera-line-of-sight pursuit by default. Set this above zero only
+# if a body-frame forward bias is intentionally needed for flight envelope tests.
+min_body_forward_component: 0.0

@@ -251,14 +251,16 @@ PX4 Gazebo bridge 最终向这些 Gazebo topic 发布关节位置指令：
 | ------------------- | --------------: | ------------------------------- |
 | `PX4_SIM_MODEL`（PX4 仿真模型名） | `x500_gimbal` | PX4 仿真模型名                  |
 | `MNT_MODE_IN`（云台输入模式） |           `4` | MAVLink gimbal protocol v2 输入 |
-| `MNT_MODE_OUT`（云台输出模式） |           `2` | MAVLink gimbal protocol v2 输出 |
+| `MNT_MODE_OUT`（云台输出模式） |           `0` | AUX/servo 输出，由 PX4 计算稳定补偿 |
+| `MNT_DO_STAB`（云台稳定补偿） |           `1` | 对伺服云台启用三轴姿态补偿     |
 | `MNT_RC_IN_MODE`（RC 云台输入模式） |           `1` | RC 输入使用角速度模式           |
-| `MNT_MAN_ROLL`（手动 roll 通道） |           `1` | 手动/RC 模式下 AUX1 控制 roll   |
-| `MNT_MAN_PITCH`（手动 pitch 通道） |           `2` | 手动/RC 模式下 AUX2 控制 pitch  |
-| `MNT_MAN_YAW`（手动 yaw 通道） |           `3` | 手动/RC 模式下 AUX3 控制 yaw    |
 | `MNT_RANGE_ROLL`（roll 输出范围） |     `180 deg` | roll 输出范围参数               |
-| `MNT_RANGE_PITCH`（pitch 输出范围） |     `180 deg` | pitch 输出范围参数              |
+| `MNT_MAX_PITCH`（最大 pitch 输出角） |      `90 deg` | pitch 正向输出上限              |
+| `MNT_MIN_PITCH`（最小 pitch 输出角） |    `-135 deg` | pitch 负向输出下限              |
 | `MNT_RANGE_YAW`（yaw 输出范围） |     `720 deg` | yaw 输出范围参数                |
+
+`MNT_MAN_ROLL`、`MNT_MAN_PITCH`、`MNT_MAN_YAW` 仅用于 AUX/manual 输入通道。
+当前项目的云台由 ROS 2 通过 MAVLink gimbal manager setpoint 自动控制，不使用手动 RC 云台通道，因此 airframe overlay 不再显式设置这些参数。
 
 ## 修改路径
 
@@ -278,7 +280,8 @@ PX4 Gazebo bridge 最终向这些 Gazebo topic 发布关节位置指令：
 | 目标机官方机身质量、惯量、碰撞体、基础传感器、旋翼 link 位姿 | `/home/zk/PX4-Autopilot/Tools/simulation/gz/models/x500_base/model.sdf`                        |
 | 目标机官方电机模型常数、电机方向、旋翼动力插件           | `/home/zk/PX4-Autopilot/Tools/simulation/gz/models/x500/model.sdf`                             |
 | PX4 官方云台源模型参考                                   | `/home/zk/PX4-Autopilot/Tools/simulation/gz/models/gimbal/model.sdf`                           |
-| PX4 airframe 云台 mount 默认参数                         | `/home/zk/PX4-Autopilot/ROMFS/px4fmu_common/init.d-posix/airframes/4019_gz_x500_gimbal`        |
+| 本项目 PX4 airframe 云台 mount overlay                   | `px4_overlays/airframes/4019_gz_x500_gimbal`                                                    |
+| PX4 airframe 云台 mount 默认参数同步目标                 | `/home/zk/PX4-Autopilot/ROMFS/px4fmu_common/init.d-posix/airframes/4019_gz_x500_gimbal`        |
 | PX4 构建后的 airframe 副本                               | `/home/zk/PX4-Autopilot/build/px4_sitl_default/etc/init.d-posix/airframes/4019_gz_x500_gimbal` |
 | ROS 云台视觉伺服调参，不是硬件参数                       | `src/uav_trajectory_tracking/config/gimbal_tracking.yaml`                                        |
 | YOLO/BoT-SORT 调参，不是硬件参数                        | `src/uav_trajectory_tracking/config/yolo_tracking.yaml`                                          |
@@ -290,6 +293,7 @@ PX4 Gazebo bridge 最终向这些 Gazebo topic 发布关节位置指令：
 ## 重启与重建说明
 
 - 修改 `px4_overlays/` 下的 wrapper 或 world 后，重启 `scripts/start_px4_gazebo.sh` 即可重新生成并同步 world。
+- 修改 `px4_overlays/airframes/4019_gz_x500_gimbal` 后，重启 `scripts/start_px4_gazebo.sh` 即可同步主机 PX4 airframe。
 - 修改 `/home/zk/PX4-Autopilot/Tools/simulation/gz/models/...` 下的 PX4 官方 Gazebo 模型后，需要完整重启 PX4/Gazebo。
-- 修改 PX4 `ROMFS` 下的 airframe 文件后，通常需要重新构建 PX4，确保 `build/px4_sitl_default/etc/init.d-posix/airframes/` 下的构建副本同步更新。
+- `scripts/start_px4_gazebo.sh` 会把本项目 airframe overlay 同步到 PX4 `ROMFS` 和已存在的构建副本，避免手工修改 PX4 生成目录。
 - 只修改 ROS YAML 调参文件时，通常只需要重启 ROS launch；当前工作区使用 `--symlink-install`，YAML-only 修改一般不需要重新 `colcon build`。

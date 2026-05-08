@@ -166,6 +166,8 @@ ENABLE_GIMBAL_TRACKING=true ./scripts/start_trajectory_tracking.sh
 
 默认情况下，`gimbal_target_tracker` 订阅 `GIMBAL_INPUT_TOPIC=/x500_0/yolo/tracks`、`/x500_0/camera/camera_info` 和 `/x500_0/gimbal/joint_states`，并根据跟踪框中心与相机内参计算出的视线角误差，向 `/fmu/in/gimbal_manager_set_attitude` 发布 PX4 gimbal manager 高频姿态 setpoint；`/x500_0/gimbal/joint_states` 是 Gazebo 云台关节反馈。`/fmu/in/vehicle_command` 用于 gimbal manager 配置和兼容回退，配置命令会重试直到 PX4 ACK。详细说明见 `docs/gimbal_target_tracking.md`。
 
+视觉拦截节点 `visual_pursuit_interceptor` 只在目标连续确认后进入 pursuit，并按云台相机真实光轴发布 PX4 NED 速度 setpoint。光轴运动学按 SDF 中的 mount pose、yaw/roll/pitch 三轴、camera sensor pose 和 Gazebo FLU 到 PX4 FRD 的标准变换显式计算；详细说明见 `docs/visual_pursuit_interception.md`。
+
 查看带 BoT-SORT 跟踪标签的相机窗口时，`rqt_image_view` 终端不要激活 `/home/zk/px4-venv`，
 否则可能找不到系统 PyQt5：
 
@@ -189,7 +191,7 @@ source install/setup.bash
 视觉链路常用配置文件：
 
 - `src/uav_trajectory_tracking/config/yolo_tracking.yaml`: YOLO/BoT-SORT 参数，例如 `tracker_config`、`confidence_threshold`、`iou_threshold`、`image_size`、`max_inference_hz`、`classes`、`device`。
-- `src/uav_trajectory_tracking/config/gimbal_tracking.yaml`: 云台视觉伺服参数，例如 `target_class_id`、`target_track_id`、`lock_target_track`、`min_score`、`fallback_fx_px`、`fallback_fy_px`、`deadband_angle_deg`、`yaw_kp_s_inv`、`pitch_kp_s_inv`、`yaw_ki_s_inv2`、`pitch_ki_s_inv2`、`search_enabled`、`search_yaw_rate_deg_s`、`max_tracking_cmd_actual_error_deg`、`command_interface`、`gimbal_yaw_joint_name`、`gimbal_pitch_joint_name`、`use_joint_feedback`、`initialize_command_from_feedback`。
+- `src/uav_trajectory_tracking/config/gimbal_tracking.yaml`: 云台视觉伺服参数，例如 `target_class_id`、`target_track_id`、`lock_target_track`、`min_score`、`fallback_fx_px`、`fallback_fy_px`、`deadband_angle_deg`、`yaw_kp_s_inv`、`pitch_kp_s_inv`、`yaw_ki_s_inv2`、`pitch_ki_s_inv2`、`search_enabled`、`search_yaw_rate_deg_s`、`max_tracking_cmd_actual_error_deg`、`command_interface`、`gimbal_yaw_joint_name`、`gimbal_pitch_joint_name`、`initialize_command_from_feedback`。
 
 ## 风场
 

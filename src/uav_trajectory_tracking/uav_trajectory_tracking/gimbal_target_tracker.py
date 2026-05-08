@@ -168,7 +168,6 @@ class GimbalTargetTracker(Node):
         self.declare_parameter("max_tracking_cmd_actual_error_deg", 30.0)
         self.declare_parameter("tracking_cmd_actual_error_timeout_s", 0.5)
         self.declare_parameter("max_search_cmd_actual_error_deg", 30.0)
-        self.declare_parameter("use_joint_feedback", True)
         self.declare_parameter("initialize_command_from_feedback", True)
         self.declare_parameter("configure_gimbal_manager", True)
         self.declare_parameter("configure_retry_period_s", 1.0)
@@ -330,7 +329,6 @@ class GimbalTargetTracker(Node):
             0.0,
             float(self.get_parameter("max_search_cmd_actual_error_deg").value),
         )
-        self.use_joint_feedback = bool(self.get_parameter("use_joint_feedback").value)
         self.initialize_command_from_feedback = bool(
             self.get_parameter("initialize_command_from_feedback").value
         )
@@ -478,9 +476,6 @@ class GimbalTargetTracker(Node):
         )
 
     def _gimbal_joint_state_callback(self, msg: JointState) -> None:
-        if not self.use_joint_feedback:
-            return
-
         positions = {
             name: position
             for name, position in zip(msg.name, msg.position, strict=False)
@@ -1238,9 +1233,6 @@ class GimbalTargetTracker(Node):
         elif self.tracking_state is TrackingState.TRACKING_GIMBAL_LAG:
             status.level = DiagnosticStatus.WARN
             status.message = "tracking paused while gimbal catches up"
-        elif not self.use_joint_feedback:
-            status.level = DiagnosticStatus.OK
-            status.message = "gimbal joint feedback disabled"
         elif joint_feedback_age_s is None:
             status.level = DiagnosticStatus.WARN
             status.message = "waiting for gimbal joint feedback"

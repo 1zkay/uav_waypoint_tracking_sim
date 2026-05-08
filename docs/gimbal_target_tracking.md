@@ -150,7 +150,6 @@ src/uav_trajectory_tracking/config/gimbal_tracking.yaml
 - `hold_last_command_on_loss`
 - `gimbal_yaw_joint_name`
 - `gimbal_pitch_joint_name`
-- `use_joint_feedback`
 - `initialize_command_from_feedback`
 - `configure_gimbal_manager`
 - `configure_retry_period_s`
@@ -230,11 +229,11 @@ cmd_pitch = clamp(cmd_pitch + pitch_rate * dt, min_pitch, max_pitch)
 
 诊断话题 `/x500_0/gimbal_target_tracker/error` 中的 `vector.x/y` 现在分别表示 yaw/pitch 视线角误差，单位为 degree，`vector.z` 为目标置信度。
 
-节点在 PX4 ROS 2 / uORB 路径上固定发送 `flags=0`，使 yaw 按机体系解释。节点默认订阅 `/x500_0/gimbal/joint_states` 作为云台真实关节反馈；`cmd_yaw/cmd_pitch`、`actual_yaw/actual_pitch`、`min_yaw/max_yaw`、搜索中心和诊断量统一保持云台关节/机体系语义。实际反馈由 Gazebo `JointStatePublisher` 发布的 `cgo3_vertical_arm_joint` 和 `cgo3_camera_joint` 提供，再经 `ros_gz_bridge` 桥接到 ROS 2。
+节点默认使用 `stabilization_mode: earth_lock`，在 `/fmu/in/gimbal_manager_set_attitude` 中设置 roll、pitch、yaw lock flags，使 PX4 gimbal manager 负责相对地球系的姿态锁定与机体姿态补偿。节点同时订阅 `/x500_0/gimbal/joint_states` 作为 Gazebo 云台真实关节反馈，用于诊断输出；反馈由 `JointStatePublisher` 发布的 `cgo3_vertical_arm_joint` 和 `cgo3_camera_joint` 提供，再经 `ros_gz_bridge` 桥接到 ROS 2。
 
-关节反馈不会在正常控制过程中覆盖 `cmd_yaw/cmd_pitch`，因此云台指令始终由控制器自身连续积分生成。启动阶段如果 `initialize_command_from_feedback=true` 且节点还没有发送过云台命令，第一次有效关节反馈会用来初始化 `cmd_yaw/cmd_pitch`，避免默认 `initial_*` 与真实云台角不一致造成首次 setpoint 跳变。如果不需要记录反馈，可将 `use_joint_feedback` 设为 `false`。
+关节反馈不会在默认 `earth_lock` 控制过程中覆盖 `cmd_yaw/cmd_pitch`，因此云台指令始终由控制器自身连续积分生成。`initialize_command_from_feedback` 仅用于 `body_follow` 兼容模式：启动阶段如果节点还没有发送过云台命令，第一次有效关节反馈会用来初始化 `cmd_yaw/cmd_pitch`，避免默认 `initial_*` 与真实云台角不一致造成首次 setpoint 跳变。
 
-tracking 状态下 `actual_yaw/actual_pitch` 作为 watchdog 输入：如果 `cmd-actual` 最大偏差持续超过 `max_tracking_cmd_actual_error_deg` 且超过 `tracking_cmd_actual_error_timeout_s`，节点进入 `tracking_gimbal_lag`，暂停视觉误差积分和 `cmd` 更新，只继续发布当前 setpoint，等待云台真实姿态追上。这样可以防止视觉方向错误、反馈异常或云台执行滞后时 `cmd_yaw/cmd_pitch` 继续漂移。`max_tracking_cmd_actual_error_deg: 0` 可关闭该保护。
+在 `body_follow` 兼容模式下，tracking 状态会把 `actual_yaw/actual_pitch` 作为 watchdog 输入：如果 `cmd-actual` 最大偏差持续超过 `max_tracking_cmd_actual_error_deg` 且超过 `tracking_cmd_actual_error_timeout_s`，节点进入 `tracking_gimbal_lag`，暂停视觉误差积分和 `cmd` 更新，只继续发布当前 setpoint，等待云台真实姿态追上。默认 `earth_lock` 模式下不使用该 watchdog。
 
 诊断话题 `/x500_0/gimbal_target_tracker/state` 使用 `diagnostic_msgs/DiagnosticArray` 发布控制状态，包含状态机状态、`cmd_yaw/cmd_pitch`、`actual_yaw/actual_pitch`、`cmd_actual_*_error`、`cmd_actual_max_error_deg`、watchdog 状态、误差积分、检测/反馈年龄、搜索中心、搜索 pitch band 和是否已用反馈初始化命令。
 
@@ -251,9 +250,9 @@ global_search:       局部扫描超过 local_search_duration_s 后，在完整 
 
 如果是 `vision_stream_lost`，节点不会主动搜索，因为这通常表示 YOLO 节点或上游图像链路异常，而不是目标飞出视场。此时节点只保持最后 setpoint 并在 `/x500_0/gimbal_target_tracker/state` 中报警。
 
-如果检测流正常但没有目标，节点先短时保持最后 `cmd_yaw/cmd_pitch`。超过 `search_after_lost_s` 后进入搜索：`local_search` 以当前新鲜 `actual_yaw/actual_pitch` 为中心，没有新鲜反馈时以 `cmd_yaw/cmd_pitch` 为中心；yaw 按 `search_yaw_rate_deg_s` 左右扫描，扫描幅度从 `search_initial_yaw_amplitude_deg` 逐步扩大到 `search_max_yaw_amplitude_deg`，pitch 按 `local_search_pitch_bands_deg` 做相对丢失角的分层切换。局部搜索超时后进入 `global_search`，在 `min_yaw_deg/max_yaw_deg` 范围内继续蛇形扫描，但 pitch 改用 `global_search_pitch_levels_deg` 中的绝对俯仰层，默认从水平 `0 deg` 开始。这样全局搜索不会因为丢失时云台已经指向错误 pitch 而一直围绕错误角度扫描。一旦重新收到符合筛选条件的目标，节点重置搜索状态并回到视觉伺服闭环。
+如果检测流正常但没有目标，节点先短时保持最后 `cmd_yaw/cmd_pitch`。超过 `search_after_lost_s` 后进入搜索：默认 `earth_lock` 模式下，`local_search` 以当前 `cmd_yaw/cmd_pitch` 为中心；`body_follow` 兼容模式下，如果有新鲜反馈，则以 `actual_yaw/actual_pitch` 为中心。yaw 按 `search_yaw_rate_deg_s` 左右扫描，扫描幅度从 `search_initial_yaw_amplitude_deg` 逐步扩大到 `search_max_yaw_amplitude_deg`，pitch 按 `local_search_pitch_bands_deg` 做相对丢失角的分层切换。局部搜索超时后进入 `global_search`，在 `min_yaw_deg/max_yaw_deg` 范围内继续蛇形扫描，但 pitch 改用 `global_search_pitch_levels_deg` 中的绝对俯仰层，默认从水平 `0 deg` 开始。这样全局搜索不会因为丢失时云台已经指向错误 pitch 而一直围绕错误角度扫描。一旦重新收到符合筛选条件的目标，节点重置搜索状态并回到视觉伺服闭环。
 
-搜索时 `actual_yaw/actual_pitch` 仍不覆盖运行中的 `cmd_yaw/cmd_pitch`。它们用于选择搜索中心和监控云台是否跟得上搜索命令。`max_search_cmd_actual_error_deg` 大于 0 时，如果 `cmd-actual` 超过该阈值，搜索会暂停推进并等待云台跟上；当前默认 `30 deg`，给 PX4/Gazebo 反馈可能存在的小固定偏差留出裕度。设为 `0` 可关闭搜索阶段 watchdog。
+搜索时 `actual_yaw/actual_pitch` 仍不覆盖运行中的 `cmd_yaw/cmd_pitch`。在 `body_follow` 兼容模式下，它们用于选择搜索中心和监控云台是否跟得上搜索命令。`max_search_cmd_actual_error_deg` 大于 0 时，如果 `cmd-actual` 超过该阈值，搜索会暂停推进并等待云台跟上；默认 `earth_lock` 模式下不使用该 watchdog。
 
 注意：本机 PX4 的 `/home/zk/PX4-Autopilot/src/modules/uxrce_dds_client/dds_topics.yaml` 已加入 `/fmu/in/gimbal_manager_set_attitude`。修改该文件后需要重新启动 `scripts/start_px4_gazebo.sh`，让 PX4 重新构建并生成 XRCE-DDS topic 支持。
 
