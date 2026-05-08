@@ -24,6 +24,13 @@ gimbal_target_tracker:
     fallback_image_width: 1280.0
     fallback_image_height: 720.0
     deadband_angle_deg: 1.0
+    # Close-range targets fill more of the image, making YOLO bbox centers
+    # jitter more. Smooth the selected center and reduce servo gain as bbox
+    # area grows to avoid aggressive gimbal swings near the target.
+    target_center_filter_alpha: 0.35
+    large_target_area_ratio_start: 0.08
+    large_target_area_ratio_full: 0.28
+    large_target_min_control_scale: 0.25
     yaw_kp_s_inv: 1.0
     pitch_kp_s_inv: 1.0
     yaw_ki_s_inv2: 0.0
