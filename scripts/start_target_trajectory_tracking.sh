@@ -3,7 +3,7 @@ set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SIM_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-TRAJECTORY_FILE="${TRAJECTORY_FILE:-${SIM_ROOT}/src/uav_trajectory_tracking/config/target_trajectory_hold.yaml}"
+TRAJECTORY_FILE="${TRAJECTORY_FILE:-${SIM_ROOT}/src/uav_trajectory_tracking/config/target_trajectory_linear.yaml}"
 PX4_ROS_NAMESPACE="${PX4_ROS_NAMESPACE:-/px4_1}"
 TARGET_NODE_NAMESPACE="${TARGET_NODE_NAMESPACE:-target}"
 TARGET_SYSTEM="${TARGET_SYSTEM:-2}"

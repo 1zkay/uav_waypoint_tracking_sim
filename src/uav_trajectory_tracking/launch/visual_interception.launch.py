@@ -13,6 +13,9 @@ def generate_launch_description():
     vehicle_status_topic = LaunchConfiguration("vehicle_status_topic")
     vehicle_local_position_topic = LaunchConfiguration("vehicle_local_position_topic")
     vehicle_attitude_topic = LaunchConfiguration("vehicle_attitude_topic")
+    host_truth_odometry_topic = LaunchConfiguration("host_truth_odometry_topic")
+    target_truth_odometry_topic = LaunchConfiguration("target_truth_odometry_topic")
+    enable_truth_odometry_bridge = LaunchConfiguration("enable_truth_odometry_bridge")
     offboard_control_mode_topic = LaunchConfiguration("offboard_control_mode_topic")
     trajectory_setpoint_topic = LaunchConfiguration("trajectory_setpoint_topic")
     vehicle_command_topic = LaunchConfiguration("vehicle_command_topic")
@@ -86,6 +89,21 @@ def generate_launch_description():
                 "vehicle_attitude_topic",
                 default_value="/fmu/out/vehicle_attitude",
                 description="Host PX4 attitude topic.",
+            ),
+            DeclareLaunchArgument(
+                "host_truth_odometry_topic",
+                default_value="/model/x500_0/odometry_with_covariance",
+                description="Gazebo truth odometry for the interceptor UAV.",
+            ),
+            DeclareLaunchArgument(
+                "target_truth_odometry_topic",
+                default_value="/model/x500_1/odometry_with_covariance",
+                description="Gazebo truth odometry for the target UAV.",
+            ),
+            DeclareLaunchArgument(
+                "enable_truth_odometry_bridge",
+                default_value="true",
+                description="Bridge Gazebo truth odometry used by visual interception guidance.",
             ),
             DeclareLaunchArgument(
                 "offboard_control_mode_topic",
@@ -271,6 +289,34 @@ def generate_launch_description():
                 description="DiagnosticArray topic for visual pursuit interception.",
             ),
             Node(
+                package="ros_gz_bridge",
+                executable="parameter_bridge",
+                name="x500_0_truth_odometry_bridge",
+                namespace=node_namespace,
+                output="screen",
+                condition=IfCondition(enable_truth_odometry_bridge),
+                arguments=[
+                    [
+                        host_truth_odometry_topic,
+                        "@nav_msgs/msg/Odometry@gz.msgs.OdometryWithCovariance",
+                    ]
+                ],
+            ),
+            Node(
+                package="ros_gz_bridge",
+                executable="parameter_bridge",
+                name="x500_1_truth_odometry_bridge",
+                namespace=node_namespace,
+                output="screen",
+                condition=IfCondition(enable_truth_odometry_bridge),
+                arguments=[
+                    [
+                        target_truth_odometry_topic,
+                        "@nav_msgs/msg/Odometry@gz.msgs.OdometryWithCovariance",
+                    ]
+                ],
+            ),
+            Node(
                 package="ros_gz_image",
                 executable="image_bridge",
                 name="x500_0_camera_image_bridge",
@@ -385,6 +431,8 @@ def generate_launch_description():
                         "vehicle_status_topic": vehicle_status_topic,
                         "vehicle_local_position_topic": vehicle_local_position_topic,
                         "vehicle_attitude_topic": vehicle_attitude_topic,
+                        "host_truth_odometry_topic": host_truth_odometry_topic,
+                        "target_truth_odometry_topic": target_truth_odometry_topic,
                         "gimbal_joint_state_topic": gimbal_joint_state_topic,
                         "tracking_active_topic": gimbal_tracking_active_topic,
                         "lock_active_topic": gimbal_lock_active_topic,

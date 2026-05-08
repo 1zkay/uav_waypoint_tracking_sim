@@ -187,6 +187,9 @@ class GimbalTargetTracker(Node):
         self.declare_parameter("lock_yaw_error_deg", 10.0)
         self.declare_parameter("lock_pitch_error_deg", 10.0)
         self.declare_parameter("lock_residual_error_rate_deg_s", 45.0)
+        self.declare_parameter("unlock_yaw_error_deg", 15.0)
+        self.declare_parameter("unlock_pitch_error_deg", 15.0)
+        self.declare_parameter("unlock_residual_error_rate_deg_s", 70.0)
         self.declare_parameter("lock_confirm_s", 0.5)
         self.declare_parameter("lock_loss_grace_s", 0.2)
         self.declare_parameter("initialize_command_from_feedback", True)
@@ -388,6 +391,18 @@ class GimbalTargetTracker(Node):
         self.lock_residual_error_rate_deg_s = max(
             0.0,
             float(self.get_parameter("lock_residual_error_rate_deg_s").value),
+        )
+        self.unlock_yaw_error_deg = max(
+            self.lock_yaw_error_deg,
+            float(self.get_parameter("unlock_yaw_error_deg").value),
+        )
+        self.unlock_pitch_error_deg = max(
+            self.lock_pitch_error_deg,
+            float(self.get_parameter("unlock_pitch_error_deg").value),
+        )
+        self.unlock_residual_error_rate_deg_s = max(
+            self.lock_residual_error_rate_deg_s,
+            float(self.get_parameter("unlock_residual_error_rate_deg_s").value),
         )
         self.lock_confirm_s = max(
             0.0,
@@ -1415,13 +1430,28 @@ class GimbalTargetTracker(Node):
         pitch_error_deg: float,
         tracking_gimbal_lag: bool,
     ) -> bool:
+        yaw_limit_deg = (
+            self.unlock_yaw_error_deg
+            if self.target_lock_active
+            else self.lock_yaw_error_deg
+        )
+        pitch_limit_deg = (
+            self.unlock_pitch_error_deg
+            if self.target_lock_active
+            else self.lock_pitch_error_deg
+        )
+        residual_rate_limit_deg_s = (
+            self.unlock_residual_error_rate_deg_s
+            if self.target_lock_active
+            else self.lock_residual_error_rate_deg_s
+        )
         yaw_ok = (
-            self.lock_yaw_error_deg <= 0.0
-            or abs(yaw_error_deg) <= self.lock_yaw_error_deg
+            yaw_limit_deg <= 0.0
+            or abs(yaw_error_deg) <= yaw_limit_deg
         )
         pitch_ok = (
-            self.lock_pitch_error_deg <= 0.0
-            or abs(pitch_error_deg) <= self.lock_pitch_error_deg
+            pitch_limit_deg <= 0.0
+            or abs(pitch_error_deg) <= pitch_limit_deg
         )
         self.lock_centered = yaw_ok and pitch_ok
 
@@ -1430,8 +1460,8 @@ class GimbalTargetTracker(Node):
             abs(self.residual_pitch_error_rate_deg_s),
         )
         self.lock_residual_rate_ok = (
-            self.lock_residual_error_rate_deg_s <= 0.0
-            or max_residual_error_rate_deg_s <= self.lock_residual_error_rate_deg_s
+            residual_rate_limit_deg_s <= 0.0
+            or max_residual_error_rate_deg_s <= residual_rate_limit_deg_s
         )
         lock_candidate = (
             self.lock_centered
@@ -1613,6 +1643,21 @@ class GimbalTargetTracker(Node):
                 self.lock_residual_rate_ok,
             ),
             self._diagnostic_value("lock_quality", self.lock_quality),
+            self._diagnostic_value("lock_yaw_error_deg", self.lock_yaw_error_deg),
+            self._diagnostic_value("lock_pitch_error_deg", self.lock_pitch_error_deg),
+            self._diagnostic_value(
+                "lock_residual_error_rate_deg_s",
+                self.lock_residual_error_rate_deg_s,
+            ),
+            self._diagnostic_value("unlock_yaw_error_deg", self.unlock_yaw_error_deg),
+            self._diagnostic_value(
+                "unlock_pitch_error_deg",
+                self.unlock_pitch_error_deg,
+            ),
+            self._diagnostic_value(
+                "unlock_residual_error_rate_deg_s",
+                self.unlock_residual_error_rate_deg_s,
+            ),
             self._diagnostic_value(
                 "lock_candidate_duration_s",
                 lock_candidate_duration_s,
