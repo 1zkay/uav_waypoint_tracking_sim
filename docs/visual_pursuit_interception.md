@@ -63,4 +63,4 @@ camera_sensor_rpy_rad: [0.0, 0.0, 3.141592653589793]
 camera_optical_axis_sensor: [1.0, 0.0, 0.0]
 ```
 
-`min_body_forward_component` 默认是 `0.0`，表示严格按真实光轴追踪。若为了飞行包线测试需要人为保持前向分量，也只在 body FRD 下钳制 `X forward`，不再在 NED 下钳制 `X north`。
+拦截器不再对 LOS 加任何前向分量偏置；速度方向只来自上述相机光轴，再经过垂直速度和加速度限幅。

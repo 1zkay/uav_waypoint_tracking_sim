@@ -36,6 +36,8 @@ class SelectedDetection:
     score: float
     center_x: float
     center_y: float
+    width: float
+    height: float
 
 
 @dataclass
@@ -111,6 +113,10 @@ class GimbalTargetTracker(Node):
         self.declare_parameter("fallback_image_width", 1280.0)
         self.declare_parameter("fallback_image_height", 720.0)
         self.declare_parameter("deadband_angle_deg", 1.5)
+        self.declare_parameter("target_center_filter_alpha", 0.35)
+        self.declare_parameter("large_target_area_ratio_start", 0.08)
+        self.declare_parameter("large_target_area_ratio_full", 0.28)
+        self.declare_parameter("large_target_min_control_scale", 0.25)
 
         self.declare_parameter("yaw_kp_s_inv", 0.18)
         self.declare_parameter("pitch_kp_s_inv", 0.14)
@@ -215,6 +221,24 @@ class GimbalTargetTracker(Node):
         )
         self.deadband_angle_deg = float(
             self.get_parameter("deadband_angle_deg").value
+        )
+        self.target_center_filter_alpha = clamp(
+            float(self.get_parameter("target_center_filter_alpha").value),
+            0.0,
+            1.0,
+        )
+        self.large_target_area_ratio_start = max(
+            0.0,
+            float(self.get_parameter("large_target_area_ratio_start").value),
+        )
+        self.large_target_area_ratio_full = max(
+            self.large_target_area_ratio_start,
+            float(self.get_parameter("large_target_area_ratio_full").value),
+        )
+        self.large_target_min_control_scale = clamp(
+            float(self.get_parameter("large_target_min_control_scale").value),
+            0.0,
+            1.0,
         )
 
         self.yaw_kp_s_inv = float(self.get_parameter("yaw_kp_s_inv").value)
@@ -346,6 +370,8 @@ class GimbalTargetTracker(Node):
 
         self.last_detection: SelectedDetection | None = None
         self.last_detection_time_s: float | None = None
+        self.last_target_area_ratio = 0.0
+        self.last_large_target_control_scale = 1.0
         self.last_detections_msg_time_s: float | None = None
         self.target_missing_since_s: float | None = None
         self.last_update_time_s: float | None = None
@@ -560,10 +586,16 @@ class GimbalTargetTracker(Node):
                 self.target_missing_since_s = now_s
             return
 
+        selected = self._filtered_detection(selected, now_s)
         self.last_detection = selected
         self.last_detection_time_s = now_s
         self.target_missing_since_s = None
-        if self.lock_target_track and not self.locked_track_id and selected.track_id:
+        if (
+            self.lock_target_track
+            and not self.target_track_id
+            and selected.track_id
+            and selected.track_id != self.locked_track_id
+        ):
             self.locked_track_id = selected.track_id
 
     def _select_detection(
@@ -586,17 +618,33 @@ class GimbalTargetTracker(Node):
                     score=score,
                     center_x=float(detection.bbox.center.position.x),
                     center_y=float(detection.bbox.center.position.y),
+                    width=float(detection.bbox.size_x),
+                    height=float(detection.bbox.size_y),
                 )
             )
 
         if not candidates:
             return None
 
-        required_track_id = self.target_track_id or self.locked_track_id
-        if required_track_id:
+        if self.target_track_id:
             for candidate in candidates:
-                if candidate.track_id == required_track_id:
+                if candidate.track_id == self.target_track_id:
                     return candidate
+            return None
+
+        if self.locked_track_id:
+            for candidate in candidates:
+                if candidate.track_id == self.locked_track_id:
+                    return candidate
+
+            if self.lock_target_track and self.last_detection is not None:
+                return min(
+                    candidates,
+                    key=lambda candidate: squared_image_distance(
+                        candidate,
+                        self.last_detection,
+                    ),
+                )
             return None
 
         if self.lock_target_track and self.last_detection is not None:
@@ -609,6 +657,32 @@ class GimbalTargetTracker(Node):
             )
 
         return max(candidates, key=lambda candidate: candidate.score)
+
+    def _filtered_detection(
+        self,
+        detection: SelectedDetection,
+        now_s: float,
+    ) -> SelectedDetection:
+        if self.target_center_filter_alpha >= 1.0:
+            return detection
+        if (
+            self.last_detection is None
+            or self.last_detection_time_s is None
+            or now_s - self.last_detection_time_s > self.lost_timeout_s
+        ):
+            return detection
+
+        alpha = self.target_center_filter_alpha
+        previous = self.last_detection
+        return SelectedDetection(
+            track_id=detection.track_id,
+            class_id=detection.class_id,
+            score=detection.score,
+            center_x=lerp(previous.center_x, detection.center_x, alpha),
+            center_y=lerp(previous.center_y, detection.center_y, alpha),
+            width=lerp(previous.width, detection.width, alpha),
+            height=lerp(previous.height, detection.height, alpha),
+        )
 
     def _release_auto_track_lock_if_lost(self, active: bool) -> None:
         if active or self.target_track_id or not self.locked_track_id:
@@ -682,9 +756,12 @@ class GimbalTargetTracker(Node):
         )
         yaw_error_deg = self._apply_angle_deadband(yaw_error_deg)
         pitch_error_deg = self._apply_angle_deadband(pitch_error_deg)
+        control_scale = self._large_target_control_scale(self.last_detection)
 
-        yaw_control_error_deg = self.yaw_error_sign * yaw_error_deg
-        pitch_control_error_deg = self.pitch_error_sign * pitch_error_deg
+        yaw_control_error_deg = self.yaw_error_sign * yaw_error_deg * control_scale
+        pitch_control_error_deg = (
+            self.pitch_error_sign * pitch_error_deg * control_scale
+        )
         if self._tracking_gimbal_lag_too_large(now_s):
             self.tracking_state = TrackingState.TRACKING_GIMBAL_LAG
             self._reset_error_integrals()
@@ -1151,6 +1228,30 @@ class GimbalTargetTracker(Node):
         pitch_error_rad = math.atan2(center_y - intrinsics.cy, intrinsics.fy)
         return math.degrees(yaw_error_rad), math.degrees(pitch_error_rad)
 
+    def _large_target_control_scale(self, detection: SelectedDetection) -> float:
+        area_ratio = self._target_area_ratio(detection)
+        self.last_target_area_ratio = area_ratio
+
+        start = self.large_target_area_ratio_start
+        full = self.large_target_area_ratio_full
+        if area_ratio <= start:
+            self.last_large_target_control_scale = 1.0
+            return 1.0
+        if full <= start:
+            self.last_large_target_control_scale = self.large_target_min_control_scale
+            return self.large_target_min_control_scale
+
+        blend = clamp((area_ratio - start) / (full - start), 0.0, 1.0)
+        scale = 1.0 - blend * (1.0 - self.large_target_min_control_scale)
+        self.last_large_target_control_scale = scale
+        return scale
+
+    def _target_area_ratio(self, detection: SelectedDetection) -> float:
+        intrinsics = self.camera_intrinsics
+        image_area = max(intrinsics.width, 1.0) * max(intrinsics.height, 1.0)
+        bbox_area = max(detection.width, 0.0) * max(detection.height, 0.0)
+        return clamp(bbox_area / image_area, 0.0, 1.0)
+
     def _fallback_intrinsics(self) -> CameraIntrinsics:
         return CameraIntrinsics(
             fx=max(self.fallback_fx_px, 1.0),
@@ -1253,6 +1354,14 @@ class GimbalTargetTracker(Node):
             ),
             self._diagnostic_value("cmd_yaw_deg", self.cmd_yaw_deg),
             self._diagnostic_value("cmd_pitch_deg", self.cmd_pitch_deg),
+            self._diagnostic_value(
+                "target_area_ratio",
+                self.last_target_area_ratio,
+            ),
+            self._diagnostic_value(
+                "large_target_control_scale",
+                self.last_large_target_control_scale,
+            ),
             self._diagnostic_value("actual_yaw_deg", self.actual_yaw_deg),
             self._diagnostic_value("actual_pitch_deg", self.actual_pitch_deg),
             self._diagnostic_value(
@@ -1469,6 +1578,10 @@ def move_toward(value: float, target: float, max_step: float) -> float:
     if value > target:
         return max(value - max_step, target)
     return value
+
+
+def lerp(start: float, end: float, alpha: float) -> float:
+    return start + (end - start) * alpha
 
 
 def angle_delta_deg(value: float, reference: float) -> float:

@@ -131,12 +131,6 @@ class VisualPursuitInterceptor(Node):
         self.gimbal_yaw_sign = float(config.get("gimbal_yaw_sign", 1.0))
         self.gimbal_pitch_sign = float(config.get("gimbal_pitch_sign", 1.0))
         self.gimbal_roll_sign = float(config.get("gimbal_roll_sign", 1.0))
-        self.min_body_forward_component = float(
-            config.get(
-                "min_body_forward_component",
-                config.get("min_forward_component", 0.0),
-            )
-        )
         self.gimbal_kinematics = GimbalCameraKinematics(
             mount_rpy_rad=parse_vector3(
                 config.get("gimbal_mount_rpy_rad", [0.0, 0.0, math.pi]),
@@ -530,15 +524,11 @@ class VisualPursuitInterceptor(Node):
         assert self.gimbal_pitch_rad is not None
         assert self.gimbal_roll_rad is not None
 
-        los_body_raw = gimbal_angles_to_body_los(
+        los_body = gimbal_angles_to_body_los(
             self.gimbal_yaw_rad,
             self.gimbal_roll_rad,
             self.gimbal_pitch_rad,
             self.gimbal_kinematics,
-        )
-        los_body = enforce_forward_component(
-            los_body_raw,
-            self.min_body_forward_component,
         )
         los_ned = normalize(
             rotate_body_to_ned(
@@ -713,10 +703,6 @@ class VisualPursuitInterceptor(Node):
             diagnostic_value("gimbal_yaw_deg", degrees_or_none(self.gimbal_yaw_rad)),
             diagnostic_value("gimbal_pitch_deg", degrees_or_none(self.gimbal_pitch_rad)),
             diagnostic_value("gimbal_roll_deg", degrees_or_none(self.gimbal_roll_rad)),
-            diagnostic_value(
-                "min_body_forward_component",
-                self.min_body_forward_component,
-            ),
             diagnostic_value("los_body_x", self.last_los_body[0]),
             diagnostic_value("los_body_y", self.last_los_body[1]),
             diagnostic_value("los_body_z", self.last_los_body[2]),
@@ -875,16 +861,6 @@ def rotate_body_to_ned(
         vy + w * ty + (z * tx - x * tz),
         vz + w * tz + (x * ty - y * tx),
     )
-
-
-def enforce_forward_component(
-    vector: tuple[float, float, float],
-    min_forward_component: float,
-) -> tuple[float, float, float]:
-    if min_forward_component <= 0.0 or vector[0] >= min_forward_component:
-        return vector
-    adjusted = (min_forward_component, vector[1], vector[2])
-    return normalize(adjusted)
 
 
 def limit_vertical_speed(
