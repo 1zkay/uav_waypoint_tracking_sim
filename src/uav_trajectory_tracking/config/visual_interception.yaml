@@ -1,0 +1,22 @@
+# Host UAV visual pursuit interception in PX4 local NED.
+# The pursuit direction comes from the body-relative gimbal camera optical axis.
+frame: NED
+
+control_rate_hz: 20.0
+takeoff_warmup_s: 1.5
+initial_hover_position_ned: [1.0, 2.0, -5.0]
+hover_acceptance_radius_m: 0.3
+
+pursuit_speed_mps: 2.0
+max_vertical_speed_mps: 1.0
+
+tracking_active_timeout_s: 0.5
+gimbal_feedback_timeout_s: 0.5
+hold_position_on_loss: true
+yaw_mode: face_los
+
+gimbal_yaw_joint_name: cgo3_vertical_arm_joint
+gimbal_pitch_joint_name: cgo3_camera_joint
+gimbal_yaw_sign: 1.0
+gimbal_pitch_sign: 1.0
+min_forward_component: 0.05

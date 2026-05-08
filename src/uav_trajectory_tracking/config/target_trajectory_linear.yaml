@@ -1,0 +1,31 @@
+# Target UAV constant-speed straight-line trajectory in its PX4 local NED frame.
+# x forward/north, y right/east, z down; negative z means altitude above home.
+frame: NED
+trajectory_type: parametric
+
+control_rate_hz: 10.0
+takeoff_warmup_s: 1.5
+acceptance_radius_m: 0.1
+land_at_end: false
+loop_route: false
+yaw_mode: face_velocity
+
+curve:
+  duration_s: 32.0
+  constants:
+    x0: -4.0
+    y0: 4.0
+    z0: -5.0
+    vx: 0.35
+    vy: 0.0
+    vz: 0.0
+  position:
+    x: x0 + vx * t
+    y: y0 + vy * t
+    z: z0 + vz * t
+  velocity:
+    x: vx
+    y: vy
+    z: vz
+
+visualization_samples: 80

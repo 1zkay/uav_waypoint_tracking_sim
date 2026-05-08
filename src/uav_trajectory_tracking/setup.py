@@ -25,6 +25,7 @@ setup(
     entry_points={
         "console_scripts": [
             "trajectory_tracker = uav_trajectory_tracking.trajectory_tracker:main",
+            "visual_pursuit_interceptor = uav_trajectory_tracking.visual_pursuit_interceptor:main",
             "trajectory_visualizer = uav_trajectory_tracking.trajectory_visualizer:main",
             "trajectory_logger = uav_trajectory_tracking.trajectory_logger:main",
             "yolo_tracker = uav_trajectory_tracking.yolo_tracker:main",
