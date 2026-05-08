@@ -3,7 +3,9 @@ gimbal_target_tracker:
     # Runtime wiring such as input topics, command topics, and PX4 system IDs
     # is supplied by launch files. Keep this file focused on reusable tuning.
     error_topic: /x500_0/gimbal_target_tracker/error
+    error_rate_topic: /x500_0/gimbal_target_tracker/error_rate
     tracking_active_topic: /x500_0/gimbal_target_tracker/tracking_active
+    lock_active_topic: /x500_0/gimbal_target_tracker/lock_active
     state_topic: /x500_0/gimbal_target_tracker/state
 
     # Detection selection.
@@ -31,8 +33,19 @@ gimbal_target_tracker:
     large_target_area_ratio_start: 0.08
     large_target_area_ratio_full: 0.28
     large_target_min_control_scale: 0.25
-    yaw_kp_s_inv: 1.0
-    pitch_kp_s_inv: 1.0
+    # Standard seeker-style lock outputs. tracking_active means fresh selected
+    # detections; lock_active means the target is centered and stable enough for
+    # the outer interception guidance loop to trust the gimbal line of sight.
+    # error_rate publishes x/y as yaw/pitch image angular rates in deg/s and z
+    # as a 0..1 lock-quality scalar.
+    error_rate_filter_alpha: 0.35
+    lock_yaw_error_deg: 10.0
+    lock_pitch_error_deg: 10.0
+    lock_error_rate_deg_s: 45.0
+    lock_confirm_s: 0.5
+    lock_loss_grace_s: 0.2
+    yaw_kp_s_inv: 0.5
+    pitch_kp_s_inv: 0.5
     yaw_ki_s_inv2: 0.0
     pitch_ki_s_inv2: 0.0
     yaw_feedforward_deg_s: 0.0
