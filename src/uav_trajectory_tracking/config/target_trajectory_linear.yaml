@@ -1,4 +1,4 @@
-# Target UAV constant-speed straight-line trajectory in its PX4 local NED frame.
+# Target UAV back-and-forth straight-line trajectory in its PX4 local NED frame.
 # x forward/north, y right/east, z down; negative z means altitude above home.
 frame: NED
 trajectory_type: parametric
@@ -11,21 +11,21 @@ loop_route: true
 yaw_mode: face_velocity
 
 curve:
-  duration_s: 32.0
+  # One full shuttle cycle: y_start -> y_start + segment_length -> y_start.
+  # With segment_length=8 m and duration=45.714 s, the cruise speed is 0.35 m/s.
+  duration_s: 45.714285714
   constants:
     x0: -4.0
-    y0: 4.0
+    y_start: 4.0
+    segment_length: 8.0
     z0: -5.0
-    vx: 0.0
-    vy: 0.35
-    vz: 0.0
   position:
-    x: x0 + vx * t
-    y: y0 + vy * t
-    z: z0 + vz * t
+    x: x0
+    y: y_start + segment_length * (1.0 - abs(2.0 * u - 1.0))
+    z: z0
   velocity:
-    x: vx
-    y: vy
-    z: vz
+    x: 0.0
+    y: 2.0 * segment_length / duration_s * ((0.5 - u) / max(abs(0.5 - u), 1e-6))
+    z: 0.0
 
 visualization_samples: 80
