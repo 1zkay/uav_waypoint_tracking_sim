@@ -18,7 +18,7 @@ gimbal_target_tracker:
 
     # Camera-calibrated image-plane visual-servo loop. CameraInfo is preferred;
     # fallback intrinsics match the current Gazebo gimbal camera model.
-    control_rate_hz: 50.0
+    control_rate_hz: 30.0
     fallback_fx_px: 410.93927419797166
     fallback_fy_px: 410.93927419797166
     fallback_cx_px: 640.0
@@ -47,16 +47,16 @@ gimbal_target_tracker:
     unlock_residual_error_rate_deg_s: 70.0
     lock_confirm_s: 0.3
     lock_loss_grace_s: 0.4
-    yaw_kp_s_inv: 1.0
-    pitch_kp_s_inv: 1.0
+    yaw_kp_s_inv: 0.75
+    pitch_kp_s_inv: 0.75
     yaw_ki_s_inv2: 0.0
     pitch_ki_s_inv2: 0.0
     yaw_feedforward_deg_s: 0.0
     pitch_feedforward_deg_s: 0.0
     max_yaw_error_integral_deg_s: 90.0
     max_pitch_error_integral_deg_s: 90.0
-    max_yaw_rate_deg_s: 60.0
-    max_pitch_rate_deg_s: 60.0
+    max_yaw_rate_deg_s: 45.0
+    max_pitch_rate_deg_s: 45.0
     yaw_error_sign: 1.0
     pitch_error_sign: -1.0
 

@@ -1150,6 +1150,12 @@ class GimbalTargetTracker(Node):
         self._set_search_pitch_target()
 
     def _search_anchor_yaw_deg(self, now_s: float) -> float:
+        if (
+            self.use_angular_velocity_setpoints
+            and self._has_fresh_joint_feedback(now_s)
+            and self.actual_yaw_deg is not None
+        ):
+            return self.actual_yaw_deg
         if self.stabilization_mode != self.STABILIZATION_MODE_BODY_FOLLOW:
             return self.cmd_yaw_deg
         if self._has_fresh_joint_feedback(now_s) and self.actual_yaw_deg is not None:
@@ -1157,6 +1163,12 @@ class GimbalTargetTracker(Node):
         return self.cmd_yaw_deg
 
     def _search_anchor_pitch_deg(self, now_s: float) -> float:
+        if (
+            self.use_angular_velocity_setpoints
+            and self._has_fresh_joint_feedback(now_s)
+            and self.actual_pitch_deg is not None
+        ):
+            return self.actual_pitch_deg
         if self.stabilization_mode != self.STABILIZATION_MODE_BODY_FOLLOW:
             return self.cmd_pitch_deg
         if (
