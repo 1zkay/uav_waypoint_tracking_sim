@@ -11,7 +11,7 @@ PX4_SIM_MODEL=${PX4_SIM_MODEL:=x500_gimbal}
 
 # Gimbal settings
 param set-default MNT_MODE_IN 4
-param set-default MNT_MODE_OUT 0
+param set-default MNT_MODE_OUT 2
 param set-default MNT_DO_STAB 1
 param set-default MNT_RC_IN_MODE 1
 

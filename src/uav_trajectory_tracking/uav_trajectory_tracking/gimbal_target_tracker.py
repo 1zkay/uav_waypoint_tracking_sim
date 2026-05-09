@@ -163,6 +163,7 @@ class GimbalTargetTracker(Node):
             "command_interface",
             self.COMMAND_INTERFACE_GIMBAL_MANAGER_SET_ATTITUDE,
         )
+        self.declare_parameter("use_angular_velocity_setpoints", False)
 
         self.declare_parameter("hold_last_command_on_loss", True)
         self.declare_parameter("send_command_before_first_detection", False)
@@ -326,6 +327,19 @@ class GimbalTargetTracker(Node):
             str(self.get_parameter("command_interface").value).strip().lower()
         )
         self._validate_command_interface()
+        self.use_angular_velocity_setpoints = bool(
+            self.get_parameter("use_angular_velocity_setpoints").value
+        )
+        if (
+            self.use_angular_velocity_setpoints
+            and self.command_interface
+            != self.COMMAND_INTERFACE_GIMBAL_MANAGER_SET_ATTITUDE
+        ):
+            self.get_logger().warn(
+                "use_angular_velocity_setpoints only applies to "
+                "command_interface=gimbal_manager_set_attitude; disabling it."
+            )
+            self.use_angular_velocity_setpoints = False
 
         self.hold_last_command_on_loss = bool(
             self.get_parameter("hold_last_command_on_loss").value
@@ -542,6 +556,7 @@ class GimbalTargetTracker(Node):
             f"stabilization={self.stabilization_mode}, "
             f"flags={self.gimbal_manager_flags}, "
             f"command_interface={self.command_interface}, "
+            f"use_angular_velocity_setpoints={self.use_angular_velocity_setpoints}, "
             f"command={self.vehicle_command_topic}, ack={self.vehicle_command_ack_topic}, "
             f"set_attitude={self.gimbal_set_attitude_topic}, class={target_filter}, "
             f"track={track_filter}, "
@@ -881,6 +896,8 @@ class GimbalTargetTracker(Node):
                 now_us,
                 self.cmd_pitch_deg,
                 self.cmd_yaw_deg,
+                pitch_rate_deg_s=0.0,
+                yaw_rate_deg_s=0.0,
             )
             self._publish_gimbal_state(now_us, active)
             return
@@ -894,6 +911,8 @@ class GimbalTargetTracker(Node):
         yaw_rate_deg_s = self._yaw_control_rate_deg_s(yaw_control_error_deg)
         pitch_rate_deg_s = self._pitch_control_rate_deg_s(pitch_control_error_deg)
 
+        previous_yaw_deg = self.cmd_yaw_deg
+        previous_pitch_deg = self.cmd_pitch_deg
         self.cmd_yaw_deg = clamp(
             self.cmd_yaw_deg + yaw_rate_deg_s * dt_s,
             self.min_yaw_deg,
@@ -903,6 +922,16 @@ class GimbalTargetTracker(Node):
             self.cmd_pitch_deg + pitch_rate_deg_s * dt_s,
             self.min_pitch_deg,
             self.max_pitch_deg,
+        )
+        effective_yaw_rate_deg_s = self._effective_rate_deg_s(
+            previous_yaw_deg,
+            self.cmd_yaw_deg,
+            dt_s,
+        )
+        effective_pitch_rate_deg_s = self._effective_rate_deg_s(
+            previous_pitch_deg,
+            self.cmd_pitch_deg,
+            dt_s,
         )
 
         now_us = self._now_us()
@@ -919,6 +948,8 @@ class GimbalTargetTracker(Node):
             now_us,
             self.cmd_pitch_deg,
             self.cmd_yaw_deg,
+            pitch_rate_deg_s=effective_pitch_rate_deg_s,
+            yaw_rate_deg_s=effective_yaw_rate_deg_s,
         )
         self._publish_gimbal_state(now_us, active)
 
@@ -936,11 +967,23 @@ class GimbalTargetTracker(Node):
             self._reset_search()
             self._publish_hold_setpoint_if_needed(now_us)
         elif self._should_search_for_target(now_s):
+            previous_pitch_deg = self.cmd_pitch_deg
+            previous_yaw_deg = self.cmd_yaw_deg
             self._update_search_command(now_s, dt_s)
             self._publish_gimbal_setpoint(
                 now_us,
                 self.cmd_pitch_deg,
                 self.cmd_yaw_deg,
+                pitch_rate_deg_s=self._effective_rate_deg_s(
+                    previous_pitch_deg,
+                    self.cmd_pitch_deg,
+                    dt_s,
+                ),
+                yaw_rate_deg_s=self._effective_rate_deg_s(
+                    previous_yaw_deg,
+                    self.cmd_yaw_deg,
+                    dt_s,
+                ),
             )
         else:
             self.tracking_state = TrackingState.HOLD
@@ -955,6 +998,8 @@ class GimbalTargetTracker(Node):
                 now_us,
                 self.cmd_pitch_deg,
                 self.cmd_yaw_deg,
+                pitch_rate_deg_s=0.0,
+                yaw_rate_deg_s=0.0,
             )
             return
 
@@ -966,6 +1011,8 @@ class GimbalTargetTracker(Node):
                 now_us,
                 self.cmd_pitch_deg,
                 self.cmd_yaw_deg,
+                pitch_rate_deg_s=0.0,
+                yaw_rate_deg_s=0.0,
             )
 
     def _mark_target_missing_if_needed(self, now_s: float) -> None:
@@ -1314,6 +1361,16 @@ class GimbalTargetTracker(Node):
         dt_s = max(0.0, now_s - self.last_update_time_s)
         self.last_update_time_s = now_s
         return min(dt_s, 0.25)
+
+    @staticmethod
+    def _effective_rate_deg_s(
+        previous_deg: float,
+        current_deg: float,
+        dt_s: float,
+    ) -> float:
+        if dt_s <= 1e-6:
+            return 0.0
+        return (current_deg - previous_deg) / dt_s
 
     def _has_fresh_detection(self, now_s: float) -> bool:
         return (
@@ -1827,12 +1884,21 @@ class GimbalTargetTracker(Node):
         now_us: int,
         pitch_deg: float,
         yaw_deg: float,
+        *,
+        pitch_rate_deg_s: float | None = None,
+        yaw_rate_deg_s: float | None = None,
     ) -> None:
         if (
             self.command_interface
             == self.COMMAND_INTERFACE_GIMBAL_MANAGER_SET_ATTITUDE
         ):
-            self._publish_gimbal_manager_set_attitude(now_us, pitch_deg, yaw_deg)
+            self._publish_gimbal_manager_set_attitude(
+                now_us,
+                pitch_deg,
+                yaw_deg,
+                pitch_rate_deg_s=pitch_rate_deg_s,
+                yaw_rate_deg_s=yaw_rate_deg_s,
+            )
         else:
             self._publish_gimbal_vehicle_command(now_us, pitch_deg, yaw_deg)
 
@@ -1841,6 +1907,9 @@ class GimbalTargetTracker(Node):
         now_us: int,
         pitch_deg: float,
         yaw_deg: float,
+        *,
+        pitch_rate_deg_s: float | None = None,
+        yaw_rate_deg_s: float | None = None,
     ) -> None:
         msg = GimbalManagerSetAttitude()
         msg.timestamp = now_us
@@ -1850,14 +1919,20 @@ class GimbalTargetTracker(Node):
         msg.target_component = self.target_component
         msg.flags = self.gimbal_manager_flags
         msg.gimbal_device_id = int(self.gimbal_device_id)
-        msg.q = euler_to_quaternion(
-            0.0,
-            math.radians(pitch_deg),
-            math.radians(yaw_deg),
-        )
-        msg.angular_velocity_x = math.nan
-        msg.angular_velocity_y = math.nan
-        msg.angular_velocity_z = math.nan
+        if self.use_angular_velocity_setpoints:
+            msg.q = [math.nan, math.nan, math.nan, math.nan]
+            msg.angular_velocity_x = math.nan
+            msg.angular_velocity_y = math.radians(pitch_rate_deg_s or 0.0)
+            msg.angular_velocity_z = math.radians(yaw_rate_deg_s or 0.0)
+        else:
+            msg.q = euler_to_quaternion(
+                0.0,
+                math.radians(pitch_deg),
+                math.radians(yaw_deg),
+            )
+            msg.angular_velocity_x = math.nan
+            msg.angular_velocity_y = math.nan
+            msg.angular_velocity_z = math.nan
         self.gimbal_set_attitude_pub.publish(msg)
         self.has_sent_gimbal_command = True
 

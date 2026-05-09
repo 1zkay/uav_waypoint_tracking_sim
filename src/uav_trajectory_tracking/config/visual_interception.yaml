@@ -4,10 +4,10 @@
 # outer guidance loop.
 frame: NED
 
-control_rate_hz: 30
+control_rate_hz: 30.0
 takeoff_warmup_s: 1.0
 initial_hover_position_ned: [0.0, 0.0, -5.0]
-hover_acceptance_radius_m: 0.3
+hover_acceptance_radius_m: 0.15
 
 # Desired ownship closing speed along true target LOS. With truth guidance
 # enabled, target Gazebo velocity is added as feedforward.
@@ -26,10 +26,10 @@ coast_velocity_decay_s: 0.6
 
 # The gimbal tracker performs seeker-lock confirmation; the interceptor only
 # adds loss grace to avoid switching PX4 control modes on short lock dips.
-lock_loss_grace_s: 0.6
-tracking_active_timeout_s: 0.8
-lock_active_timeout_s: 0.8
-gimbal_feedback_timeout_s: 0.8
+lock_loss_grace_s: 0.3
+tracking_active_timeout_s: 0.2
+lock_active_timeout_s: 0.2
+gimbal_feedback_timeout_s: 2.0
 hold_position_on_loss: true
 yaw_mode: fixed_north
 
