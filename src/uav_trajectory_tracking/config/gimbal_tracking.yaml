@@ -47,8 +47,8 @@ gimbal_target_tracker:
     unlock_residual_error_rate_deg_s: 70.0
     lock_confirm_s: 0.3
     lock_loss_grace_s: 0.4
-    yaw_kp_s_inv: 0.5
-    pitch_kp_s_inv: 0.5
+    yaw_kp_s_inv: 1.0
+    pitch_kp_s_inv: 1.0
     yaw_ki_s_inv2: 0.0
     pitch_ki_s_inv2: 0.0
     yaw_feedforward_deg_s: 0.0
@@ -63,8 +63,8 @@ gimbal_target_tracker:
     # Command limits.
     initial_yaw_deg: 0.0
     initial_pitch_deg: 0.0
-    min_yaw_deg: -180.0
-    max_yaw_deg: 180.0
+    min_yaw_deg: -360.0
+    max_yaw_deg: 360.0
     min_pitch_deg: -90.0
     max_pitch_deg: 90.0
 
@@ -84,16 +84,16 @@ gimbal_target_tracker:
     hold_last_command_on_loss: true
     send_command_before_first_detection: true
     search_enabled: true
-    search_after_lost_s: 2.0
-    local_search_duration_s: 15.0
-    search_yaw_rate_deg_s: 30.0
-    search_pitch_rate_deg_s: 10.0
-    search_initial_yaw_amplitude_deg: 10.0
-    search_max_yaw_amplitude_deg: 180.0
+    search_after_lost_s: 0.8
+    local_search_duration_s: 8.0
+    search_yaw_rate_deg_s: 75.0
+    search_pitch_rate_deg_s: 25.0
+    search_initial_yaw_amplitude_deg: 30.0
+    search_max_yaw_amplitude_deg: 360.0
     # Local search uses pitch offsets around the angle where the target was lost.
-    local_search_pitch_bands_deg: [0.0, -8.0, 8.0, -16.0, 16.0]
+    local_search_pitch_bands_deg: [0.0, -12.0, 12.0, -24.0, 24.0, -40.0, 40.0]
     # Global search uses absolute pitch levels, starting near the horizon.
-    global_search_pitch_levels_deg: [0.0, -20.0, 20.0, -40.0, 30.0, -60.0, -80.0]
+    global_search_pitch_levels_deg: [0.0, -25.0, 25.0, -50.0, 40.0, -75.0, 45.0, -90.0]
     configure_gimbal_manager: true
     configure_retry_period_s: 1.0
     # 0 means retry until PX4 accepts the gimbal manager configure command.

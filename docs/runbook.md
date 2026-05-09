@@ -20,7 +20,7 @@ ros2 topic echo /trajectory_path --once
 
 `/trajectory_tracker/current_stage` 的阶段编号为：`0=entry`、`1=trajectory`、`2=return`、`3=finished`。
 正常轨迹应先进入 `entry`，到达曲线起点并稳定后再进入 `trajectory`。当前默认主机轨迹是
-`trajectory_hold.yaml` 的 `(-3, 2, -5)` 悬停点；切换到 `trajectory_figure8.yaml` 后可用同一阶段逻辑检查 8 字轨迹。
+`trajectory_hold.yaml` 的 `(0, 0, -5)` 悬停点；切换到 `trajectory_figure8.yaml` 后可用同一阶段逻辑检查 8 字轨迹。
 
 主机云台相机和 YOLO 检测启动后：
 

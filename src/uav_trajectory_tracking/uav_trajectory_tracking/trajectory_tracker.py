@@ -26,7 +26,6 @@ STAGE_ENTRY = 0
 STAGE_TRAJECTORY = 1
 STAGE_RETURN = 2
 STAGE_FINISHED = 3
-ENTRY_HOLD_S = 0.5
 
 
 class TrajectoryTracker(Node):
@@ -51,6 +50,7 @@ class TrajectoryTracker(Node):
         self.trajectory = ParametricTrajectory.from_config(config)
         self.control_rate_hz = float(config.get("control_rate_hz", 10.0))
         self.takeoff_warmup_s = float(config.get("takeoff_warmup_s", 1.5))
+        self.entry_hold_s = max(0.0, float(config.get("entry_hold_s", 0.2)))
         self.land_at_end = bool(config.get("land_at_end", True))
         self.loop_route = bool(config.get("loop_route", False))
         self.yaw_mode = str(config.get("yaw_mode", "face_velocity"))
@@ -140,6 +140,8 @@ class TrajectoryTracker(Node):
             f"rate={self.control_rate_hz:.1f} Hz, "
             f"entry=({self.entry_point[0]:.2f}, {self.entry_point[1]:.2f}, {self.entry_point[2]:.2f}) m, "
             f"acceptance_radius={self.trajectory.acceptance_radius_m:.2f} m, "
+            f"takeoff_warmup={self.takeoff_warmup_s:.2f} s, "
+            f"entry_hold={self.entry_hold_s:.2f} s, "
             f"velocity_feedforward={self.trajectory.has_velocity}"
         )
         self.get_logger().info(
@@ -243,7 +245,7 @@ class TrajectoryTracker(Node):
             self.get_logger().info(f"Reached trajectory entry point (distance={distance:.2f} m).")
             return
 
-        if now_us - self.entry_reached_since_us < int(ENTRY_HOLD_S * 1_000_000):
+        if now_us - self.entry_reached_since_us < int(self.entry_hold_s * 1_000_000):
             return
 
         self.trajectory_start_us = now_us

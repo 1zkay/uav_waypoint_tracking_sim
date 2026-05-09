@@ -5,14 +5,14 @@
 frame: NED
 
 control_rate_hz: 30
-takeoff_warmup_s: 1.5
-initial_hover_position_ned: [-3.0, 2.0, -5.0]
-hover_acceptance_radius_m: 0.1
+takeoff_warmup_s: 1.0
+initial_hover_position_ned: [0.0, 0.0, -5.0]
+hover_acceptance_radius_m: 0.3
 
 # Desired ownship closing speed along true target LOS. With truth guidance
 # enabled, target Gazebo velocity is added as feedforward.
-pursuit_speed_mps: 1.2
-max_vertical_speed_mps: 0.6
+pursuit_speed_mps: 3.0
+max_vertical_speed_mps: 1.0
 max_pursuit_accel_mps2: 1.5
 
 navigation_gain: 3.0

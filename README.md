@@ -101,7 +101,7 @@ cd /home/zk/uav_trajectory_tracking_sim
 `TRAJECTORY_FILE` 指向 `src/uav_trajectory_tracking/config/target_trajectory_hold.yaml`。
 轨迹控制采用 `entry -> trajectory -> return -> finished` 阶段：无人机先飞到曲线起点，
 满足统一的 `acceptance_radius_m` 到达判定并短暂稳定后，才开始参数化时间 `t`。默认主机
-`trajectory_hold.yaml` 的悬停点为 `(-3, 2, -5)`；如果改用 `trajectory_figure8.yaml`，
+`trajectory_hold.yaml` 的悬停点为 `(0, 0, -5)`；如果改用 `trajectory_figure8.yaml`，
 8 字轨迹的交叉点、起点和终点均为 `(0, 0, -5)`，QGC 的水平轨迹不会包含额外的长距离进场线。
 
 使用自定义轨迹文件时，PX4/Gazebo 终端和 ROS 终端都传入同一个变量：
