@@ -12,13 +12,13 @@ loop_route: true
 yaw_mode: face_velocity
 
 curve:
-  duration_s: 48.0
+  duration_s: 50.0
   constants:
     cx: -1.0
-    cy: 2.0
+    cy: 1.0
     cz: -5.0
-    ax: 5.0
-    ay: 7.0
+    ax: 5.5
+    ay: 7.5
     az: 3.0
   position:
     x: cx + ax * cos(tau * u)

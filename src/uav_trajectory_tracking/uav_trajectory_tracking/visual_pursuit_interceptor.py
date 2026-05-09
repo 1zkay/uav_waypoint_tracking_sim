@@ -39,7 +39,7 @@ class InterceptorState:
 
 Vector3 = tuple[float, float, float]
 Matrix3 = tuple[Vector3, Vector3, Vector3]
-VELOCITY_STATES = {InterceptorState.PURSUIT, InterceptorState.COAST}
+GUIDANCE_STATES = {InterceptorState.PURSUIT, InterceptorState.COAST}
 
 
 @dataclass(frozen=True)
@@ -116,10 +116,6 @@ class VisualPursuitInterceptor(Node):
             config.get("pursuit_speed_mps", 2.0),
             "pursuit_speed_mps",
         )
-        self.max_vertical_speed_mps = positive_float(
-            config.get("max_vertical_speed_mps", 1.0),
-            "max_vertical_speed_mps",
-        )
         self.max_pursuit_accel_mps2 = positive_float(
             config.get("max_pursuit_accel_mps2", 1.0),
             "max_pursuit_accel_mps2",
@@ -131,10 +127,6 @@ class VisualPursuitInterceptor(Node):
         self.max_guidance_accel_mps2 = nonnegative_float(
             config.get("max_guidance_accel_mps2", self.max_pursuit_accel_mps2),
             "max_guidance_accel_mps2",
-        )
-        self.max_lateral_guidance_speed_mps = nonnegative_float(
-            config.get("max_lateral_guidance_speed_mps", self.pursuit_speed_mps),
-            "max_lateral_guidance_speed_mps",
         )
         self.los_rate_filter_alpha = clamp(
             float(config.get("los_rate_filter_alpha", 0.35)),
@@ -250,11 +242,11 @@ class VisualPursuitInterceptor(Node):
         self.last_relative_velocity_ned: Vector3 | None = None
         self.last_range_m: float | None = None
         self.last_closing_speed_mps: float | None = None
+        self.last_commanded_closing_speed_mps = 0.0
         self.last_guidance_los_ned: Vector3 | None = None
         self.last_los_rate_ned = (0.0, 0.0, 0.0)
         self.last_guidance_accel_ned = (0.0, 0.0, 0.0)
-        self.last_lateral_velocity_ned = (0.0, 0.0, 0.0)
-        self.last_velocity_ned = (0.0, 0.0, 0.0)
+        self.last_velocity_setpoint_ned = (0.0, 0.0, 0.0)
         self.last_control_time_s: float | None = None
 
         px4_qos = QoSProfile(
@@ -443,8 +435,13 @@ class VisualPursuitInterceptor(Node):
         self.previous_state = self.state
         pursuing = self._ready_to_pursue(now_s)
         velocity_control = pursuing or self.state == InterceptorState.COAST
+        acceleration_setpoint_active = pursuing
 
-        self._publish_offboard_control_mode(now_us, velocity_control)
+        self._publish_offboard_control_mode(
+            now_us,
+            velocity_control,
+            acceleration_setpoint_active,
+        )
         self._publish_setpoint(now_us, pursuing, velocity_control, dt_s)
 
         warmup_cycles = max(1, int(self.takeoff_warmup_s * self.control_rate_hz))
@@ -455,7 +452,12 @@ class VisualPursuitInterceptor(Node):
         ):
             self._request_offboard_and_arm_if_needed(now_us)
 
-        self._publish_diagnostics(now_us, pursuing, velocity_control)
+        self._publish_diagnostics(
+            now_us,
+            pursuing,
+            velocity_control,
+            acceleration_setpoint_active,
+        )
         self.setpoint_counter += 1
 
     def _ready_to_pursue(self, now_s: float) -> bool:
@@ -496,7 +498,10 @@ class VisualPursuitInterceptor(Node):
             return False
 
         if self.truth_guidance_required and not self._fresh_truth_feedback(now_s):
-            if self.previous_state in VELOCITY_STATES and self._lock_recently_active(now_s):
+            if (
+                self.previous_state in GUIDANCE_STATES
+                and self._lock_recently_active(now_s)
+            ):
                 self.state = InterceptorState.COAST
                 return False
             self._capture_loss_hold_position_if_needed()
@@ -512,7 +517,7 @@ class VisualPursuitInterceptor(Node):
             return True
 
         if (
-            self.previous_state in VELOCITY_STATES
+            self.previous_state in GUIDANCE_STATES
             and self._lock_recently_active(now_s)
         ):
             self.state = InterceptorState.COAST
@@ -537,7 +542,7 @@ class VisualPursuitInterceptor(Node):
         )
 
     def _has_setpoint_available(self) -> bool:
-        return self.hold_position is not None or self.state in VELOCITY_STATES
+        return self.hold_position is not None or self.state in GUIDANCE_STATES
 
     def _can_request_offboard(self) -> bool:
         return (
@@ -550,7 +555,7 @@ class VisualPursuitInterceptor(Node):
     def _capture_loss_hold_position_if_needed(self) -> None:
         if not self.hold_position_on_loss:
             return
-        if self.previous_state not in VELOCITY_STATES:
+        if self.previous_state not in GUIDANCE_STATES:
             return
         if (
             self.vehicle_local_position is None
@@ -622,11 +627,16 @@ class VisualPursuitInterceptor(Node):
             and now_s - self.target_truth_state.stamp_s <= self.truth_odometry_timeout_s
         )
 
-    def _publish_offboard_control_mode(self, now_us: int, velocity_control: bool) -> None:
+    def _publish_offboard_control_mode(
+        self,
+        now_us: int,
+        velocity_control: bool,
+        acceleration_setpoint_active: bool,
+    ) -> None:
         msg = OffboardControlMode()
         msg.position = not velocity_control
         msg.velocity = velocity_control
-        msg.acceleration = False
+        msg.acceleration = acceleration_setpoint_active
         msg.attitude = False
         msg.body_rate = False
         msg.thrust_and_torque = False
@@ -687,21 +697,25 @@ class VisualPursuitInterceptor(Node):
             guidance_los_ned = los_ned
             relative_truth = None
 
-        target_velocity_ned = self._proportional_navigation_velocity(
+        velocity_setpoint_ned = self._pursuit_velocity_setpoint(
             guidance_los_ned,
             dt_s,
             relative_truth,
         )
-        velocity_ned = limit_vector_delta(
-            self.last_velocity_ned,
-            target_velocity_ned,
-            self.max_pursuit_accel_mps2 * max(dt_s, 0.0),
+        accel_ned = self._proportional_navigation_accel(
+            guidance_los_ned,
+            dt_s,
+            relative_truth,
         )
 
         msg = TrajectorySetpoint()
         msg.position = [math.nan, math.nan, math.nan]
-        msg.velocity = [velocity_ned[0], velocity_ned[1], velocity_ned[2]]
-        msg.acceleration = [math.nan, math.nan, math.nan]
+        msg.velocity = [
+            velocity_setpoint_ned[0],
+            velocity_setpoint_ned[1],
+            velocity_setpoint_ned[2],
+        ]
+        msg.acceleration = [accel_ned[0], accel_ned[1], accel_ned[2]]
         msg.jerk = [math.nan, math.nan, math.nan]
         msg.yaw = self._yaw_from_los(guidance_los_ned)
         msg.yawspeed = math.nan
@@ -716,72 +730,84 @@ class VisualPursuitInterceptor(Node):
             )
         self.last_los_body = los_body
         self.last_los_ned = guidance_los_ned
-        self.last_velocity_ned = velocity_ned
+        self.last_velocity_setpoint_ned = velocity_setpoint_ned
 
     def _publish_coast_setpoint(self, now_us: int, dt_s: float) -> None:
         decay = math.exp(-max(dt_s, 0.0) / self.coast_velocity_decay_s)
-        velocity_ned = scale(self.last_velocity_ned, decay)
-        velocity_ned = limit_vertical_speed(velocity_ned, self.max_vertical_speed_mps)
+        velocity_setpoint_ned = scale(self.last_velocity_setpoint_ned, decay)
 
         msg = TrajectorySetpoint()
         msg.position = [math.nan, math.nan, math.nan]
-        msg.velocity = [velocity_ned[0], velocity_ned[1], velocity_ned[2]]
+        msg.velocity = [
+            velocity_setpoint_ned[0],
+            velocity_setpoint_ned[1],
+            velocity_setpoint_ned[2],
+        ]
         msg.acceleration = [math.nan, math.nan, math.nan]
         msg.jerk = [math.nan, math.nan, math.nan]
         msg.yaw = self._yaw_from_los(self.last_los_ned)
         msg.yawspeed = math.nan
         msg.timestamp = now_us
         self.trajectory_pub.publish(msg)
-        self.last_velocity_ned = velocity_ned
+        self.last_guidance_accel_ned = (0.0, 0.0, 0.0)
+        self.last_commanded_closing_speed_mps = 0.0
+        self.last_velocity_setpoint_ned = velocity_setpoint_ned
 
-    def _proportional_navigation_velocity(
+    def _pursuit_velocity_setpoint(
+        self,
+        los_ned: Vector3,
+        dt_s: float,
+        relative_truth: RelativeTruth | None,
+    ) -> Vector3:
+        closing_speed_mps = self.pursuit_speed_mps
+        self.last_commanded_closing_speed_mps = closing_speed_mps
+
+        velocity_setpoint_ned = scale(los_ned, closing_speed_mps)
+        if relative_truth is not None:
+            velocity_setpoint_ned = add_vectors(
+                relative_truth.target_velocity_ned,
+                velocity_setpoint_ned,
+            )
+
+        return limit_vector_delta(
+            self.last_velocity_setpoint_ned,
+            velocity_setpoint_ned,
+            self.max_pursuit_accel_mps2 * max(dt_s, 0.0),
+        )
+
+    def _proportional_navigation_accel(
         self,
         los_ned: Vector3,
         dt_s: float,
         relative_truth: RelativeTruth | None,
     ) -> Vector3:
         los_rate_ned = self._update_los_rate(los_ned, dt_s, relative_truth)
-        closing_speed_mps = (
-            max(relative_truth.closing_speed_mps, 0.0)
-            if relative_truth is not None
-            else self.pursuit_speed_mps
+        actual_closing_speed_mps = self._actual_closing_speed_mps(
+            los_ned,
+            relative_truth,
         )
-        if relative_truth is None:
-            self.last_closing_speed_mps = closing_speed_mps
-        guidance_accel_ned = scale(
+        self.last_closing_speed_mps = actual_closing_speed_mps
+
+        lateral_accel_ned = scale(
             cross(los_rate_ned, los_ned),
-            self.navigation_gain * closing_speed_mps,
+            self.navigation_gain * max(actual_closing_speed_mps, 0.0),
         )
-        guidance_accel_ned = limit_vector_norm(
-            guidance_accel_ned,
+        lateral_accel_ned = limit_vector_norm(
+            lateral_accel_ned,
             self.max_guidance_accel_mps2,
         )
 
-        lateral_velocity_ned = add_vectors(
-            self.last_lateral_velocity_ned,
-            scale(guidance_accel_ned, max(dt_s, 0.0)),
-        )
-        lateral_velocity_ned = reject_from_axis(lateral_velocity_ned, los_ned)
-        lateral_velocity_ned = limit_vector_norm(
-            lateral_velocity_ned,
-            self.max_lateral_guidance_speed_mps,
-        )
+        self.last_guidance_accel_ned = lateral_accel_ned
+        return lateral_accel_ned
 
-        closing_velocity_ned = scale(los_ned, self.pursuit_speed_mps)
-        target_velocity_ned = add_vectors(closing_velocity_ned, lateral_velocity_ned)
+    def _actual_closing_speed_mps(
+        self,
+        los_ned: Vector3,
+        relative_truth: RelativeTruth | None,
+    ) -> float:
         if relative_truth is not None:
-            target_velocity_ned = add_vectors(
-                relative_truth.target_velocity_ned,
-                target_velocity_ned,
-            )
-        target_velocity_ned = limit_vertical_speed(
-            target_velocity_ned,
-            self.max_vertical_speed_mps,
-        )
-
-        self.last_guidance_accel_ned = guidance_accel_ned
-        self.last_lateral_velocity_ned = lateral_velocity_ned
-        return target_velocity_ned
+            return relative_truth.closing_speed_mps
+        return dot(self._current_velocity_ned(), los_ned)
 
     def _update_los_rate(
         self,
@@ -839,11 +865,25 @@ class VisualPursuitInterceptor(Node):
             closing_speed_mps=closing_speed_mps,
         )
 
+    def _current_velocity_ned(self) -> Vector3:
+        if self.vehicle_local_position is not None:
+            velocity = (
+                float(self.vehicle_local_position.vx),
+                float(self.vehicle_local_position.vy),
+                float(self.vehicle_local_position.vz),
+            )
+            if all(math.isfinite(value) for value in velocity):
+                return velocity
+        if self.host_truth_state is not None:
+            return self.host_truth_state.velocity_ned
+        return (0.0, 0.0, 0.0)
+
     def _reset_guidance_state(self) -> None:
         self.last_guidance_los_ned = None
         self.last_los_rate_ned = (0.0, 0.0, 0.0)
         self.last_guidance_accel_ned = (0.0, 0.0, 0.0)
-        self.last_lateral_velocity_ned = (0.0, 0.0, 0.0)
+        self.last_velocity_setpoint_ned = (0.0, 0.0, 0.0)
+        self.last_commanded_closing_speed_mps = 0.0
 
     def _publish_hold_setpoint(self, now_us: int) -> None:
         if self.takeoff_position is None:
@@ -878,7 +918,6 @@ class VisualPursuitInterceptor(Node):
         msg.yawspeed = math.nan
         msg.timestamp = now_us
         self.trajectory_pub.publish(msg)
-        self.last_velocity_ned = (0.0, 0.0, 0.0)
 
     def _yaw_from_los(self, los_ned: tuple[float, float, float]) -> float:
         if self.yaw_mode == "fixed_north":
@@ -966,6 +1005,7 @@ class VisualPursuitInterceptor(Node):
         now_us: int,
         pursuing: bool,
         velocity_control: bool,
+        acceleration_setpoint_active: bool,
     ) -> None:
         msg = DiagnosticArray()
         msg.header.stamp.sec = int(now_us // 1_000_000)
@@ -976,10 +1016,15 @@ class VisualPursuitInterceptor(Node):
         status.hardware_id = f"target_system={self.target_system}"
         status.level = DiagnosticStatus.OK if pursuing else DiagnosticStatus.WARN
         status.message = self.state
+        current_velocity_ned = self._current_velocity_ned()
         status.values = [
             diagnostic_value("state", self.state),
             diagnostic_value("pursuing", pursuing),
             diagnostic_value("velocity_control_active", velocity_control),
+            diagnostic_value(
+                "acceleration_setpoint_active",
+                acceleration_setpoint_active,
+            ),
             diagnostic_value("takeoff_altitude_reached", self.takeoff_altitude_reached),
             diagnostic_value("takeoff_x_m", point_value(self.takeoff_position, 0)),
             diagnostic_value("takeoff_y_m", point_value(self.takeoff_position, 1)),
@@ -1008,7 +1053,10 @@ class VisualPursuitInterceptor(Node):
                 self._lock_loss_age_s(now_us * 1e-6),
             ),
             diagnostic_value("navigation_gain", self.navigation_gain),
-            diagnostic_value("commanded_closing_speed_mps", self.pursuit_speed_mps),
+            diagnostic_value(
+                "commanded_closing_speed_mps",
+                self.last_commanded_closing_speed_mps,
+            ),
             diagnostic_value("truth_guidance_enabled", self.truth_guidance_enabled),
             diagnostic_value("truth_guidance_required", self.truth_guidance_required),
             diagnostic_value(
@@ -1073,20 +1121,20 @@ class VisualPursuitInterceptor(Node):
                 self.last_guidance_accel_ned[2],
             ),
             diagnostic_value(
-                "lateral_velocity_ned_x_mps",
-                self.last_lateral_velocity_ned[0],
+                "velocity_setpoint_ned_x_mps",
+                self.last_velocity_setpoint_ned[0],
             ),
             diagnostic_value(
-                "lateral_velocity_ned_y_mps",
-                self.last_lateral_velocity_ned[1],
+                "velocity_setpoint_ned_y_mps",
+                self.last_velocity_setpoint_ned[1],
             ),
             diagnostic_value(
-                "lateral_velocity_ned_z_mps",
-                self.last_lateral_velocity_ned[2],
+                "velocity_setpoint_ned_z_mps",
+                self.last_velocity_setpoint_ned[2],
             ),
-            diagnostic_value("velocity_ned_x_mps", self.last_velocity_ned[0]),
-            diagnostic_value("velocity_ned_y_mps", self.last_velocity_ned[1]),
-            diagnostic_value("velocity_ned_z_mps", self.last_velocity_ned[2]),
+            diagnostic_value("velocity_ned_x_mps", current_velocity_ned[0]),
+            diagnostic_value("velocity_ned_y_mps", current_velocity_ned[1]),
+            diagnostic_value("velocity_ned_z_mps", current_velocity_ned[2]),
         ]
         msg.status.append(status)
         self.diagnostics_pub.publish(msg)
@@ -1266,15 +1314,6 @@ def rotate_body_to_ned(
     )
 
 
-def limit_vertical_speed(
-    vector: tuple[float, float, float],
-    max_vertical_speed: float,
-) -> tuple[float, float, float]:
-    if abs(vector[2]) <= max_vertical_speed:
-        return vector
-    return (vector[0], vector[1], math.copysign(max_vertical_speed, vector[2]))
-
-
 def limit_vector_norm(vector: Vector3, max_norm: float) -> Vector3:
     if max_norm <= 0.0:
         return (0.0, 0.0, 0.0)
@@ -1284,29 +1323,16 @@ def limit_vector_norm(vector: Vector3, max_norm: float) -> Vector3:
     return scale(vector, max_norm / norm)
 
 
-def limit_vector_delta(
-    current: tuple[float, float, float],
-    target: tuple[float, float, float],
-    max_delta: float,
-) -> tuple[float, float, float]:
+def limit_vector_delta(current: Vector3, target: Vector3, max_delta: float) -> Vector3:
     if max_delta <= 0.0:
         return current
 
-    delta = (
-        target[0] - current[0],
-        target[1] - current[1],
-        target[2] - current[2],
-    )
-    delta_norm = math.sqrt(delta[0] ** 2 + delta[1] ** 2 + delta[2] ** 2)
+    delta = subtract_vectors(target, current)
+    delta_norm = vector_norm(delta)
     if delta_norm <= max_delta or delta_norm <= 1e-9:
         return target
 
-    ratio = max_delta / delta_norm
-    return (
-        current[0] + delta[0] * ratio,
-        current[1] + delta[1] * ratio,
-        current[2] + delta[2] * ratio,
-    )
+    return add_vectors(current, scale(delta, max_delta / delta_norm))
 
 
 def normalize(vector: tuple[float, float, float]) -> tuple[float, float, float]:
@@ -1338,11 +1364,6 @@ def add_vectors(left: Vector3, right: Vector3) -> Vector3:
 
 def subtract_vectors(left: Vector3, right: Vector3) -> Vector3:
     return (left[0] - right[0], left[1] - right[1], left[2] - right[2])
-
-
-def reject_from_axis(vector: Vector3, axis: Vector3) -> Vector3:
-    unit_axis = normalize(axis)
-    return subtract_vectors(vector, scale(unit_axis, dot(vector, unit_axis)))
 
 
 def scale(vector: tuple[float, float, float], scalar: float) -> tuple[float, float, float]:

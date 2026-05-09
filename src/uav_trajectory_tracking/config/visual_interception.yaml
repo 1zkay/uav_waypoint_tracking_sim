@@ -9,24 +9,23 @@ takeoff_warmup_s: 1.0
 initial_hover_position_ned: [0.0, 0.0, -5.0]
 hover_acceptance_radius_m: 0.15
 
-# Desired ownship closing speed along true target LOS. With truth guidance
-# enabled, target Gazebo velocity is added as feedforward.
+# Desired ownship closing speed along target LOS. Pursuit uses a velocity
+# setpoint for LOS closure and a PN acceleration setpoint for lateral
+# correction.
 pursuit_speed_mps: 3.0
-max_vertical_speed_mps: 1.5
-max_pursuit_accel_mps2: 2.2
+max_pursuit_accel_mps2: 2.0
 
 navigation_gain: 3.5
-max_guidance_accel_mps2: 2.2
-max_lateral_guidance_speed_mps: 2.2
+max_guidance_accel_mps2: 2.0
 los_rate_filter_alpha: 0.35
 truth_guidance_enabled: true
 truth_guidance_required: true
 truth_odometry_timeout_s: 0.5
-coast_velocity_decay_s: 1.0
+coast_velocity_decay_s: 0.5
 
 # The gimbal tracker performs seeker-lock confirmation; the interceptor only
 # adds loss grace to avoid switching PX4 control modes on short lock dips.
-lock_loss_grace_s: 1.0
+lock_loss_grace_s: 0.4
 tracking_active_timeout_s: 0.2
 lock_active_timeout_s: 0.2
 gimbal_feedback_timeout_s: 2.0
