@@ -70,6 +70,21 @@ cd /home/zk/uav_trajectory_tracking_sim
 ./scripts/start_rviz.sh
 ```
 
+终端 7 可选，用于通过 Foxglove 查看 ROS 2 话题、曲线、图像和运动状态：
+
+```bash
+cd /home/zk/uav_trajectory_tracking_sim
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+ros2 launch foxglove_bridge foxglove_bridge_launch.xml address:=127.0.0.1 port:=8765
+```
+
+打开 Foxglove 后选择 `Foxglove WebSocket`，连接地址为：
+
+```text
+ws://localhost:8765
+```
+
 当前 PX4 main 在这台机器上发布的是 `/fmu/out/vehicle_status_v4` 和
 `/fmu/out/vehicle_local_position_v1`，启动文件默认已经使用这两个话题。
 `start_trajectory_tracking.sh` 会同时启动控制节点、RViz 可视化发布节点、相机桥接和 YOLO + BoT-SORT 跟踪节点。
@@ -246,36 +261,56 @@ WIND_FILE=/home/zk/uav_trajectory_tracking_sim/src/uav_trajectory_tracking/confi
 
 ## 轨迹日志
 
-每次启动 `start_trajectory_tracking.sh` 时默认会同步记录两份 CSV 轨迹日志，目录为
-`log/trajectory_runs/<启动时间>/`：
+每次启动 `start_trajectory_tracking.sh` 或 `start_visual_interception.sh` 时默认会同步记录主机
+`x500_0` 的两份 CSV 轨迹日志，目录为 `log/trajectory_runs/<启动时间>/` 或
+`log/trajectory_runs/host_<启动时间>/`。`start_target_trajectory_tracking.sh` 会记录目标机
+`x500_1`，目录名前缀为 `target_`：
 
 - `px4_estimate.csv`: PX4 EKF/控制侧看到的估计状态，坐标系为 PX4 local NED，机体系为 FRD。
-- `gazebo_truth.csv`: Gazebo 物理真值 odometry，原始坐标系为 Gazebo ENU，同时写入 NED 等效列便于和 PX4 对比。
+- `gazebo_truth.csv`: Gazebo 物理真值 odometry，位置原始坐标系为 Gazebo ENU，twist 原始坐标系为
+  `child_frame_id` 对应的 body FLU，同时写入 PX4 可比的 NED/FRD 等效列。
 
 真值日志由 `x500_gimbal_trajectory_wind` 内的 Gazebo `OdometryPublisher` 发布
 `/model/x500_0/odometry_with_covariance`，再通过 `ros_gz_bridge` 桥接到 ROS 2。PX4 估计日志订阅
 `/fmu/out/vehicle_local_position_v1`、`/fmu/out/vehicle_attitude` 和
-`/fmu/out/vehicle_odometry`。Gazebo 真值 CSV 中的加速度由真值速度差分得到；
+`/fmu/out/vehicle_odometry`。Gazebo 真值 CSV 中的速度会先由 body FLU 旋转到 NED，
+姿态会由 ENU/FLU 转为 NED/FRD；真值加速度由转换后的 NED 速度差分得到；
 PX4 估计 CSV 中的加速度直接来自 `VehicleLocalPosition.ax/ay/az`。
 两份 CSV 都保留 `ros_time_s` / `ros_elapsed_s`；其中 `ros_time_s` 是写入时的系统时间，
 `ros_elapsed_s` 是 logger 启动后的相对时间。PX4 表额外写入 `px4_time_s` 和
 `px4_elapsed_s`，Gazebo 表额外写入 `gazebo_time_s` 和 `gazebo_elapsed_s`。
 画图和误差分析优先使用 `px4_elapsed_s` / `gazebo_elapsed_s` 作为横轴。
 
-可以指定日志根目录或本次运行名：
+可以指定日志根目录或本次运行名。视觉拦截链路同样支持这些变量：
 
 ```bash
 LOG_ROOT=/home/zk/uav_logs RUN_ID=wind_3ms_figure8 ./scripts/start_trajectory_tracking.sh
+LOG_ROOT=/home/zk/uav_logs RUN_ID=host_intercept_01 ./scripts/start_visual_interception.sh
 ```
 
 不需要 CSV 记录时：
 
 ```bash
 ./scripts/start_trajectory_tracking.sh enable_csv_logging:=false
+ENABLE_CSV_LOGGING=false ./scripts/start_visual_interception.sh
 ```
 
 ## 可视化话题
 
+- `/fmu/out/vehicle_status_v4`: 主机 PX4 状态，包括导航状态、解锁状态和 failsafe 相关状态。
+- `/fmu/out/vehicle_local_position_v1`: 主机 PX4 EKF 本地位置/速度/加速度估计，坐标系为 PX4 local NED，常用字段为 `x/y/z`、`vx/vy/vz`、`ax/ay/az`、`heading` 和有效标志。
+- `/fmu/out/vehicle_attitude`: 主机 PX4 姿态估计，`q` 为 body FRD 到 local NED 的四元数，顺序为 `w,x,y,z`。
+- `/fmu/out/vehicle_odometry`: 主机 PX4 里程计估计，包含位置、姿态、速度、body FRD 角速度和方差。
+- `/model/x500_0/odometry_with_covariance`: 主机 Gazebo truth odometry。位置原始坐标系为 Gazebo ENU；twist 按 `child_frame_id` 在 body FLU 下表达，`trajectory_logger` 会转换出 NED/FRD 等效列。
+- `/fmu/in/offboard_control_mode`: 主机 PX4 Offboard 控制模式输入。
+- `/fmu/in/trajectory_setpoint`: 主机 PX4 轨迹/速度 setpoint 输入，轨迹跟踪或视觉拦截控制器会发布到这里。
+- `/fmu/in/vehicle_command`: 主机 PX4 MAVLink 命令输入，例如切模式、解锁、降落和云台配置。
+- `/fmu/out/vehicle_command_ack_v1`: 主机 PX4 命令 ACK 输出。
+- `/px4_1/fmu/out/vehicle_status_v4`: 目标机 PX4 状态。
+- `/px4_1/fmu/out/vehicle_local_position_v1`: 目标机 PX4 EKF 本地位置/速度/加速度估计。
+- `/px4_1/fmu/out/vehicle_attitude`: 目标机 PX4 姿态估计。
+- `/px4_1/fmu/out/vehicle_odometry`: 目标机 PX4 里程计估计。
+- `/model/x500_1/odometry_with_covariance`: 目标机 Gazebo truth odometry，视觉拦截导引用它计算真实相对位置/速度。
 - `/trajectory_markers`: 轨迹起点、终点和当前飞行位置。
 - `/trajectory_path`: YAML 参数化曲线采样得到的规划轨迹。
 - `/vehicle_path`: 飞行过程中累积的实际轨迹。
@@ -291,8 +326,6 @@ LOG_ROOT=/home/zk/uav_logs RUN_ID=wind_3ms_figure8 ./scripts/start_trajectory_tr
 - `/x500_0/gimbal_target_tracker/lock_active`: 目标是否居中且稳定到足以作为外层导引门控。
 - `/x500_0/gimbal_target_tracker/state`: 云台控制诊断，包含状态机状态、`cmd_yaw/cmd_pitch`、`actual_yaw/actual_pitch`、锁定阈值、残差角速度、积分项、反馈年龄和搜索状态。
 - `/fmu/in/gimbal_manager_set_attitude`: 云台高频姿态 setpoint，类型为 `px4_msgs/msg/GimbalManagerSetAttitude`。
-- `/model/x500_0/odometry_with_covariance`: 主机 Gazebo truth odometry，`visual_pursuit_interceptor` 通过 `ros_gz_bridge` 订阅后转成 NED。
-- `/model/x500_1/odometry_with_covariance`: 目标机 Gazebo truth odometry，视觉拦截导引用它计算真实相对位置/速度。
 - `/x500_0/visual_pursuit_interceptor/diagnostics`: 视觉拦截诊断，包含 `state`、`pursuing`、`velocity_control_active`、真实 `range_m`、`closing_speed_mps`、`relative_*`、`los_rate_*`、`gimbal_truth_los_error_deg` 和输出速度。
 - `/target/trajectory_markers`: 目标无人机轨迹可视化。
 - `/target/trajectory_path`: 目标无人机规划路径。

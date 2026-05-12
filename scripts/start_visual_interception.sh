@@ -6,6 +6,9 @@ SIM_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PYTHON_VENV="${PYTHON_VENV:-/home/zk/px4-venv}"
 
 VISUAL_INTERCEPTION_CONFIG_FILE="${VISUAL_INTERCEPTION_CONFIG_FILE:-${SIM_ROOT}/src/uav_trajectory_tracking/config/visual_interception.yaml}"
+ENABLE_CSV_LOGGING="${ENABLE_CSV_LOGGING:-true}"
+LOG_ROOT="${LOG_ROOT:-}"
+RUN_ID="${RUN_ID:-host_$(date +%Y%m%d_%H%M%S)}"
 ENABLE_CAMERA_BRIDGE="${ENABLE_CAMERA_BRIDGE:-true}"
 ENABLE_YOLO_TRACKING="${ENABLE_YOLO_TRACKING:-true}"
 ENABLE_YOLO_ANNOTATION="${ENABLE_YOLO_ANNOTATION:-true}"
@@ -33,6 +36,7 @@ GIMBAL_PERFORMANCE_METRICS_TOPIC="${GIMBAL_PERFORMANCE_METRICS_TOPIC:-/x500_0/gi
 VEHICLE_STATUS_TOPIC="${VEHICLE_STATUS_TOPIC:-/fmu/out/vehicle_status_v4}"
 VEHICLE_LOCAL_POSITION_TOPIC="${VEHICLE_LOCAL_POSITION_TOPIC:-/fmu/out/vehicle_local_position_v1}"
 VEHICLE_ATTITUDE_TOPIC="${VEHICLE_ATTITUDE_TOPIC:-/fmu/out/vehicle_attitude}"
+VEHICLE_ODOMETRY_TOPIC="${VEHICLE_ODOMETRY_TOPIC:-/fmu/out/vehicle_odometry}"
 OFFBOARD_CONTROL_MODE_TOPIC="${OFFBOARD_CONTROL_MODE_TOPIC:-/fmu/in/offboard_control_mode}"
 TRAJECTORY_SETPOINT_TOPIC="${TRAJECTORY_SETPOINT_TOPIC:-/fmu/in/trajectory_setpoint}"
 VEHICLE_COMMAND_TOPIC="${VEHICLE_COMMAND_TOPIC:-/fmu/in/vehicle_command}"
@@ -114,6 +118,7 @@ add_launch_arg "gimbal_performance_metrics_topic" "${GIMBAL_PERFORMANCE_METRICS_
 add_launch_arg "vehicle_status_topic" "${VEHICLE_STATUS_TOPIC}"
 add_launch_arg "vehicle_local_position_topic" "${VEHICLE_LOCAL_POSITION_TOPIC}"
 add_launch_arg "vehicle_attitude_topic" "${VEHICLE_ATTITUDE_TOPIC}"
+add_launch_arg "vehicle_odometry_topic" "${VEHICLE_ODOMETRY_TOPIC}"
 add_launch_arg "offboard_control_mode_topic" "${OFFBOARD_CONTROL_MODE_TOPIC}"
 add_launch_arg "trajectory_setpoint_topic" "${TRAJECTORY_SETPOINT_TOPIC}"
 add_launch_arg "vehicle_command_topic" "${VEHICLE_COMMAND_TOPIC}"
@@ -123,6 +128,8 @@ add_launch_arg "target_component" "${TARGET_COMPONENT}"
 add_launch_arg "source_system" "${SOURCE_SYSTEM}"
 add_launch_arg "source_component" "${SOURCE_COMPONENT}"
 add_launch_arg "visual_interception_diagnostics_topic" "${VISUAL_INTERCEPTION_DIAGNOSTICS_TOPIC}"
+add_launch_arg "enable_csv_logging" "${ENABLE_CSV_LOGGING}"
+add_launch_arg "run_id" "${RUN_ID}"
 
 if [[ -n "${YOLO_TRACKING_CONFIG_FILE:-}" ]]; then
   add_launch_arg "yolo_tracking_config_file" "${YOLO_TRACKING_CONFIG_FILE}"
@@ -130,8 +137,12 @@ fi
 if [[ -n "${GIMBAL_CONFIG_FILE:-}" ]]; then
   add_launch_arg "gimbal_config_file" "${GIMBAL_CONFIG_FILE}"
 fi
+if [[ -n "${LOG_ROOT}" ]]; then
+  add_launch_arg "log_root" "${LOG_ROOT}"
+fi
 
 echo "Launching visual interception with $(launch_arg_value visual_interception_config_file "${VISUAL_INTERCEPTION_CONFIG_FILE}")"
+echo "CSV logging: $(launch_arg_value enable_csv_logging "${ENABLE_CSV_LOGGING}") run_id=$(launch_arg_value run_id "${RUN_ID}") root=$(launch_arg_value log_root "${LOG_ROOT:-./log/trajectory_runs}")"
 echo "Camera bridge: $(launch_arg_value enable_camera_bridge "${ENABLE_CAMERA_BRIDGE}") qos=$(launch_arg_value camera_image_bridge_qos "${CAMERA_IMAGE_BRIDGE_QOS}") $(launch_arg_value camera_gazebo_topic "${CAMERA_GAZEBO_TOPIC}") -> $(launch_arg_value camera_image_topic "${CAMERA_IMAGE_TOPIC}")"
 echo "YOLO tracking: $(launch_arg_value enable_yolo_tracking "${ENABLE_YOLO_TRACKING}") tracks=$(launch_arg_value yolo_tracks_topic "${YOLO_TRACKS_TOPIC}")"
 echo "YOLO annotation: $(launch_arg_value enable_yolo_annotation "${ENABLE_YOLO_ANNOTATION}") annotated=$(launch_arg_value yolo_tracks_annotated_image_topic "${YOLO_TRACKS_ANNOTATED_IMAGE_TOPIC}") max_hz=$(launch_arg_value yolo_annotation_max_publish_hz "${YOLO_ANNOTATION_MAX_PUBLISH_HZ}")"

@@ -13,6 +13,7 @@ def generate_launch_description():
     vehicle_status_topic = LaunchConfiguration("vehicle_status_topic")
     vehicle_local_position_topic = LaunchConfiguration("vehicle_local_position_topic")
     vehicle_attitude_topic = LaunchConfiguration("vehicle_attitude_topic")
+    vehicle_odometry_topic = LaunchConfiguration("vehicle_odometry_topic")
     host_truth_odometry_topic = LaunchConfiguration("host_truth_odometry_topic")
     target_truth_odometry_topic = LaunchConfiguration("target_truth_odometry_topic")
     enable_truth_odometry_bridge = LaunchConfiguration("enable_truth_odometry_bridge")
@@ -67,6 +68,9 @@ def generate_launch_description():
     visual_interception_diagnostics_topic = LaunchConfiguration(
         "visual_interception_diagnostics_topic"
     )
+    enable_csv_logging = LaunchConfiguration("enable_csv_logging")
+    log_root = LaunchConfiguration("log_root")
+    run_id = LaunchConfiguration("run_id")
 
     return LaunchDescription(
         [
@@ -89,6 +93,11 @@ def generate_launch_description():
                 "vehicle_attitude_topic",
                 default_value="/fmu/out/vehicle_attitude",
                 description="Host PX4 attitude topic.",
+            ),
+            DeclareLaunchArgument(
+                "vehicle_odometry_topic",
+                default_value="/fmu/out/vehicle_odometry",
+                description="Host PX4 vehicle odometry topic used by trajectory_logger.",
             ),
             DeclareLaunchArgument(
                 "host_truth_odometry_topic",
@@ -288,6 +297,21 @@ def generate_launch_description():
                 default_value="/x500_0/visual_pursuit_interceptor/diagnostics",
                 description="DiagnosticArray topic for visual pursuit interception.",
             ),
+            DeclareLaunchArgument(
+                "enable_csv_logging",
+                default_value="true",
+                description="Start trajectory_logger for host x500_0 estimate/truth CSV logs.",
+            ),
+            DeclareLaunchArgument(
+                "log_root",
+                default_value="",
+                description="Host trajectory CSV log root. Empty uses ./log/trajectory_runs.",
+            ),
+            DeclareLaunchArgument(
+                "run_id",
+                default_value="",
+                description="Host trajectory CSV run directory name. Empty uses current timestamp.",
+            ),
             Node(
                 package="ros_gz_bridge",
                 executable="parameter_bridge",
@@ -314,6 +338,24 @@ def generate_launch_description():
                         target_truth_odometry_topic,
                         "@nav_msgs/msg/Odometry@gz.msgs.OdometryWithCovariance",
                     ]
+                ],
+            ),
+            Node(
+                package="uav_trajectory_tracking",
+                executable="trajectory_logger",
+                name="trajectory_logger",
+                namespace=node_namespace,
+                output="screen",
+                condition=IfCondition(enable_csv_logging),
+                parameters=[
+                    {
+                        "log_root": log_root,
+                        "run_id": run_id,
+                        "vehicle_local_position_topic": vehicle_local_position_topic,
+                        "vehicle_attitude_topic": vehicle_attitude_topic,
+                        "vehicle_odometry_topic": vehicle_odometry_topic,
+                        "gazebo_odometry_topic": host_truth_odometry_topic,
+                    }
                 ],
             ),
             Node(

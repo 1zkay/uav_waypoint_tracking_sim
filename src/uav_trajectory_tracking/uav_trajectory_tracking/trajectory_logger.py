@@ -198,7 +198,6 @@ class TrajectoryLogger(Node):
             float(twist.linear.y),
             float(twist.linear.z),
         )
-        acceleration = self._truth_acceleration(sample_time_s, velocity)
 
         q = (
             float(pose.orientation.w),
@@ -207,12 +206,24 @@ class TrajectoryLogger(Node):
             float(pose.orientation.z),
         )
         roll, pitch, yaw = quaternion_to_rpy(q)
+        q_ned_frd = enu_flu_quaternion_to_ned_frd(q)
+        roll_ned, pitch_ned, yaw_ned = quaternion_to_rpy(q_ned_frd)
 
         x_enu = float(pose.position.x)
         y_enu = float(pose.position.y)
         z_enu = float(pose.position.z)
-        vx_enu, vy_enu, vz_enu = velocity
-        ax_enu, ay_enu, az_enu = acceleration
+        vx_body_flu, vy_body_flu, vz_body_flu = velocity
+        vx_ned, vy_ned, vz_ned = body_flu_vector_to_ned(q, velocity)
+        ax_ned, ay_ned, az_ned = self._truth_acceleration(
+            sample_time_s,
+            (vx_ned, vy_ned, vz_ned),
+        )
+        wx_body_flu = float(twist.angular.x)
+        wy_body_flu = float(twist.angular.y)
+        wz_body_flu = float(twist.angular.z)
+        wx_body_frd, wy_body_frd, wz_body_frd = body_flu_vector_to_body_frd(
+            (wx_body_flu, wy_body_flu, wz_body_flu)
+        )
         ros_time_s = self._ros_now_s()
 
         row = {
@@ -227,31 +238,38 @@ class TrajectoryLogger(Node):
             "x_enu_m": fmt_float(x_enu),
             "y_enu_m": fmt_float(y_enu),
             "z_enu_m": fmt_float(z_enu),
-            "vx_enu_mps": fmt_float(vx_enu),
-            "vy_enu_mps": fmt_float(vy_enu),
-            "vz_enu_mps": fmt_float(vz_enu),
-            "ax_enu_mps2": fmt_float(ax_enu),
-            "ay_enu_mps2": fmt_float(ay_enu),
-            "az_enu_mps2": fmt_float(az_enu),
+            "vx_body_flu_mps": fmt_float(vx_body_flu),
+            "vy_body_flu_mps": fmt_float(vy_body_flu),
+            "vz_body_flu_mps": fmt_float(vz_body_flu),
             "x_ned_equiv_m": fmt_float(y_enu),
             "y_ned_equiv_m": fmt_float(x_enu),
             "z_ned_equiv_m": fmt_float(-z_enu),
-            "vx_ned_equiv_mps": fmt_float(vy_enu),
-            "vy_ned_equiv_mps": fmt_float(vx_enu),
-            "vz_ned_equiv_mps": fmt_float(-vz_enu),
-            "ax_ned_equiv_mps2": fmt_float(ay_enu),
-            "ay_ned_equiv_mps2": fmt_float(ax_enu),
-            "az_ned_equiv_mps2": fmt_float(neg_optional(az_enu)),
-            "q_w": fmt_float(q[0]),
-            "q_x": fmt_float(q[1]),
-            "q_y": fmt_float(q[2]),
-            "q_z": fmt_float(q[3]),
-            "roll_rad": fmt_float(roll),
-            "pitch_rad": fmt_float(pitch),
-            "yaw_rad": fmt_float(yaw),
-            "angular_velocity_x_radps": fmt_float(twist.angular.x),
-            "angular_velocity_y_radps": fmt_float(twist.angular.y),
-            "angular_velocity_z_radps": fmt_float(twist.angular.z),
+            "vx_ned_equiv_mps": fmt_float(vx_ned),
+            "vy_ned_equiv_mps": fmt_float(vy_ned),
+            "vz_ned_equiv_mps": fmt_float(vz_ned),
+            "ax_ned_equiv_mps2": fmt_float(ax_ned),
+            "ay_ned_equiv_mps2": fmt_float(ay_ned),
+            "az_ned_equiv_mps2": fmt_float(az_ned),
+            "q_enu_flu_w": fmt_float(q[0]),
+            "q_enu_flu_x": fmt_float(q[1]),
+            "q_enu_flu_y": fmt_float(q[2]),
+            "q_enu_flu_z": fmt_float(q[3]),
+            "roll_enu_flu_rad": fmt_float(roll),
+            "pitch_enu_flu_rad": fmt_float(pitch),
+            "yaw_enu_flu_rad": fmt_float(yaw),
+            "q_ned_frd_w": fmt_float(q_ned_frd[0]),
+            "q_ned_frd_x": fmt_float(q_ned_frd[1]),
+            "q_ned_frd_y": fmt_float(q_ned_frd[2]),
+            "q_ned_frd_z": fmt_float(q_ned_frd[3]),
+            "roll_ned_frd_rad": fmt_float(roll_ned),
+            "pitch_ned_frd_rad": fmt_float(pitch_ned),
+            "yaw_ned_frd_rad": fmt_float(yaw_ned),
+            "angular_velocity_x_body_flu_radps": fmt_float(wx_body_flu),
+            "angular_velocity_y_body_flu_radps": fmt_float(wy_body_flu),
+            "angular_velocity_z_body_flu_radps": fmt_float(wz_body_flu),
+            "angular_velocity_x_body_frd_radps": fmt_float(wx_body_frd),
+            "angular_velocity_y_body_frd_radps": fmt_float(wy_body_frd),
+            "angular_velocity_z_body_frd_radps": fmt_float(wz_body_frd),
         }
         self.truth_writer.writerow(row)
 
@@ -332,12 +350,9 @@ def truth_fieldnames() -> list[str]:
         "x_enu_m",
         "y_enu_m",
         "z_enu_m",
-        "vx_enu_mps",
-        "vy_enu_mps",
-        "vz_enu_mps",
-        "ax_enu_mps2",
-        "ay_enu_mps2",
-        "az_enu_mps2",
+        "vx_body_flu_mps",
+        "vy_body_flu_mps",
+        "vz_body_flu_mps",
         "x_ned_equiv_m",
         "y_ned_equiv_m",
         "z_ned_equiv_m",
@@ -347,16 +362,26 @@ def truth_fieldnames() -> list[str]:
         "ax_ned_equiv_mps2",
         "ay_ned_equiv_mps2",
         "az_ned_equiv_mps2",
-        "q_w",
-        "q_x",
-        "q_y",
-        "q_z",
-        "roll_rad",
-        "pitch_rad",
-        "yaw_rad",
-        "angular_velocity_x_radps",
-        "angular_velocity_y_radps",
-        "angular_velocity_z_radps",
+        "q_enu_flu_w",
+        "q_enu_flu_x",
+        "q_enu_flu_y",
+        "q_enu_flu_z",
+        "roll_enu_flu_rad",
+        "pitch_enu_flu_rad",
+        "yaw_enu_flu_rad",
+        "q_ned_frd_w",
+        "q_ned_frd_x",
+        "q_ned_frd_y",
+        "q_ned_frd_z",
+        "roll_ned_frd_rad",
+        "pitch_ned_frd_rad",
+        "yaw_ned_frd_rad",
+        "angular_velocity_x_body_flu_radps",
+        "angular_velocity_y_body_flu_radps",
+        "angular_velocity_z_body_flu_radps",
+        "angular_velocity_x_body_frd_radps",
+        "angular_velocity_y_body_frd_radps",
+        "angular_velocity_z_body_frd_radps",
     ]
 
 
@@ -375,6 +400,112 @@ def quaternion_to_rpy(q: tuple[float, float, float, float]) -> tuple[float, floa
     yaw = math.atan2(siny_cosp, cosy_cosp)
 
     return roll, pitch, yaw
+
+
+def quaternion_to_matrix(q: tuple[float, float, float, float]) -> tuple[tuple[float, ...], ...]:
+    w, x, y, z = normalize_quaternion(q)
+    return (
+        (
+            1.0 - 2.0 * (y * y + z * z),
+            2.0 * (x * y - z * w),
+            2.0 * (x * z + y * w),
+        ),
+        (
+            2.0 * (x * y + z * w),
+            1.0 - 2.0 * (x * x + z * z),
+            2.0 * (y * z - x * w),
+        ),
+        (
+            2.0 * (x * z - y * w),
+            2.0 * (y * z + x * w),
+            1.0 - 2.0 * (x * x + y * y),
+        ),
+    )
+
+
+def matrix_to_quaternion(matrix: tuple[tuple[float, ...], ...]) -> tuple[float, float, float, float]:
+    m = matrix
+    trace = m[0][0] + m[1][1] + m[2][2]
+    if trace > 0.0:
+        scale = math.sqrt(trace + 1.0) * 2.0
+        w = 0.25 * scale
+        x = (m[2][1] - m[1][2]) / scale
+        y = (m[0][2] - m[2][0]) / scale
+        z = (m[1][0] - m[0][1]) / scale
+    elif m[0][0] > m[1][1] and m[0][0] > m[2][2]:
+        scale = math.sqrt(1.0 + m[0][0] - m[1][1] - m[2][2]) * 2.0
+        w = (m[2][1] - m[1][2]) / scale
+        x = 0.25 * scale
+        y = (m[0][1] + m[1][0]) / scale
+        z = (m[0][2] + m[2][0]) / scale
+    elif m[1][1] > m[2][2]:
+        scale = math.sqrt(1.0 + m[1][1] - m[0][0] - m[2][2]) * 2.0
+        w = (m[0][2] - m[2][0]) / scale
+        x = (m[0][1] + m[1][0]) / scale
+        y = 0.25 * scale
+        z = (m[1][2] + m[2][1]) / scale
+    else:
+        scale = math.sqrt(1.0 + m[2][2] - m[0][0] - m[1][1]) * 2.0
+        w = (m[1][0] - m[0][1]) / scale
+        x = (m[0][2] + m[2][0]) / scale
+        y = (m[1][2] + m[2][1]) / scale
+        z = 0.25 * scale
+    return normalize_quaternion((w, x, y, z))
+
+
+def matmul(
+    left: tuple[tuple[float, ...], ...],
+    right: tuple[tuple[float, ...], ...],
+) -> tuple[tuple[float, ...], ...]:
+    return tuple(
+        tuple(sum(left[row][idx] * right[idx][col] for idx in range(3)) for col in range(3))
+        for row in range(3)
+    )
+
+
+def matvec(
+    matrix: tuple[tuple[float, ...], ...],
+    vector: tuple[float, float, float],
+) -> tuple[float, float, float]:
+    return tuple(sum(matrix[row][idx] * vector[idx] for idx in range(3)) for row in range(3))
+
+
+def enu_to_ned_matrix() -> tuple[tuple[float, ...], ...]:
+    return (
+        (0.0, 1.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (0.0, 0.0, -1.0),
+    )
+
+
+def flu_to_frd_matrix() -> tuple[tuple[float, ...], ...]:
+    return (
+        (1.0, 0.0, 0.0),
+        (0.0, -1.0, 0.0),
+        (0.0, 0.0, -1.0),
+    )
+
+
+def enu_flu_quaternion_to_ned_frd(
+    q_enu_flu: tuple[float, float, float, float],
+) -> tuple[float, float, float, float]:
+    rotation_ned_frd = matmul(
+        matmul(enu_to_ned_matrix(), quaternion_to_matrix(q_enu_flu)),
+        flu_to_frd_matrix(),
+    )
+    return matrix_to_quaternion(rotation_ned_frd)
+
+
+def body_flu_vector_to_body_frd(vector: tuple[float, float, float]) -> tuple[float, float, float]:
+    return matvec(flu_to_frd_matrix(), vector)
+
+
+def body_flu_vector_to_ned(
+    q_enu_flu: tuple[float, float, float, float],
+    vector: tuple[float, float, float],
+) -> tuple[float, float, float]:
+    rotation_ned_flu = matmul(enu_to_ned_matrix(), quaternion_to_matrix(q_enu_flu))
+    return matvec(rotation_ned_flu, vector)
 
 
 def normalize_quaternion(q: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
@@ -398,12 +529,6 @@ def fmt_time(value: float | str) -> str:
     if value == "":
         return ""
     return f"{float(value):.6f}"
-
-
-def neg_optional(value: float | str) -> float | str:
-    if value == "":
-        return ""
-    return -float(value)
 
 
 def main(args: list[str] | None = None) -> None:
