@@ -45,10 +45,10 @@ gimbal_target_tracker:
     unlock_yaw_error_deg: 20.0
     unlock_pitch_error_deg: 20.0
     unlock_residual_error_rate_deg_s: 70.0
-    lock_confirm_s: 0.3
+    lock_confirm_s: 0.2
     lock_loss_grace_s: 0.4
-    yaw_kp_s_inv: 0.75
-    pitch_kp_s_inv: 0.75
+    yaw_kp_s_inv: 1.5
+    pitch_kp_s_inv: 1.5
     yaw_ki_s_inv2: 0.0
     pitch_ki_s_inv2: 0.0
     yaw_feedforward_deg_s: 0.0
