@@ -162,6 +162,7 @@ src/uav_trajectory_tracking/config/gimbal_tracking.yaml
 - `search_max_yaw_amplitude_deg`
 - `local_search_pitch_bands_deg`
 - `global_search_pitch_levels_deg`
+- `search_active_topic`
 - `command_interface`
 - `hold_last_command_on_loss`
 - `gimbal_yaw_joint_name`
@@ -253,7 +254,9 @@ cmd_pitch = clamp(cmd_pitch + pitch_rate * dt, min_pitch, max_pitch)
 
 在 `body_follow` 兼容模式下，tracking 状态会把 `actual_yaw/actual_pitch` 作为 watchdog 输入：如果 `cmd-actual` 最大偏差持续超过 `max_tracking_cmd_actual_error_deg` 且超过 `tracking_cmd_actual_error_timeout_s`，节点进入 `tracking_gimbal_lag`，暂停视觉误差积分和 `cmd` 更新，只继续发布当前 setpoint，等待云台真实姿态追上。默认 `earth_lock` 模式下不使用该 watchdog。
 
-诊断话题 `/x500_0/gimbal_target_tracker/state` 使用 `diagnostic_msgs/DiagnosticArray` 发布控制状态，包含状态机状态、`cmd_yaw/cmd_pitch`、`actual_yaw/actual_pitch`、`lock_active`、`lock_centered`、`lock_residual_rate_ok`、锁定/解锁阈值、残差角速度、watchdog 状态、误差积分、检测/反馈年龄、搜索中心、搜索 pitch band 和是否已用反馈初始化命令。
+控制状态话题 `/x500_0/gimbal_target_tracker/search_active` 使用 `std_msgs/Bool` 发布云台是否正在执行 `local_search` 或 `global_search`。外层控制器应订阅这个明确语义的话题，而不是依赖诊断字段。
+
+诊断话题 `/x500_0/gimbal_target_tracker/state` 使用 `diagnostic_msgs/DiagnosticArray` 发布观测状态，包含状态机状态、`cmd_yaw/cmd_pitch`、`actual_yaw/actual_pitch`、`lock_active`、`lock_centered`、`lock_residual_rate_ok`、锁定/解锁阈值、残差角速度、watchdog 状态、误差积分、检测/反馈年龄、搜索中心、搜索 pitch band 和是否已用反馈初始化命令。
 
 ## 目标丢失搜索
 

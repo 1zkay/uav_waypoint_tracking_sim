@@ -30,6 +30,15 @@ tracking_active_timeout_s: 0.2
 lock_active_timeout_s: 0.2
 gimbal_feedback_timeout_s: 2.0
 hold_position_on_loss: true
+# When the gimbal tracker enters local/global search, keep XY fixed but scan
+# altitude so the target can re-enter the camera FOV when pitch alone is not
+# enough. Values are PX4 local NED: more negative z means higher altitude.
+search_vertical_motion_enabled: true
+search_vertical_amplitude_m: 2.0
+search_vertical_period_s: 12.0
+search_vertical_state_timeout_s: 0.5
+search_vertical_min_z_ned: -8.0
+search_vertical_max_z_ned: -2.0
 yaw_mode: fixed_north
 
 gimbal_yaw_joint_name: cgo3_vertical_arm_joint

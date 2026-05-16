@@ -218,8 +218,8 @@ source install/setup.bash
 视觉链路常用配置文件：
 
 - `src/uav_trajectory_tracking/config/yolo_tracking.yaml`: YOLO/BoT-SORT 参数，例如 `tracker_config`、`confidence_threshold`、`iou_threshold`、`image_size`、`max_inference_hz`、`classes`、`device`。
-- `src/uav_trajectory_tracking/config/gimbal_tracking.yaml`: 云台视觉伺服参数，例如 `target_class_id`、`target_track_id`、`lock_target_track`、`min_score`、`fallback_fx_px`、`fallback_fy_px`、`deadband_angle_deg`、`yaw_kp_s_inv`、`pitch_kp_s_inv`、`lock_yaw_error_deg`、`unlock_yaw_error_deg`、`lock_residual_error_rate_deg_s`、`unlock_residual_error_rate_deg_s`、`search_enabled`、`search_yaw_rate_deg_s`、`command_interface`、`gimbal_yaw_joint_name`、`gimbal_pitch_joint_name`。
-- `src/uav_trajectory_tracking/config/visual_interception.yaml`: 视觉拦截参数，例如 `truth_guidance_enabled`、`truth_guidance_required`、`pursuit_speed_mps`、`navigation_gain`、`max_guidance_accel_mps2`、`lock_loss_grace_s`、`coast_velocity_decay_s`、`yaw_mode` 和相机/云台光轴运动学常量。
+- `src/uav_trajectory_tracking/config/gimbal_tracking.yaml`: 云台视觉伺服参数，例如 `target_class_id`、`target_track_id`、`lock_target_track`、`min_score`、`fallback_fx_px`、`fallback_fy_px`、`deadband_angle_deg`、`yaw_kp_s_inv`、`pitch_kp_s_inv`、`lock_yaw_error_deg`、`unlock_yaw_error_deg`、`lock_residual_error_rate_deg_s`、`unlock_residual_error_rate_deg_s`、`search_enabled`、`search_yaw_rate_deg_s`、`search_active_topic`、`command_interface`、`gimbal_yaw_joint_name`、`gimbal_pitch_joint_name`。
+- `src/uav_trajectory_tracking/config/visual_interception.yaml`: 视觉拦截参数，例如 `truth_guidance_enabled`、`truth_guidance_required`、`pursuit_speed_mps`、`navigation_gain`、`max_guidance_accel_mps2`、`lock_loss_grace_s`、`coast_velocity_decay_s`、`search_vertical_motion_enabled`、`search_vertical_amplitude_m`、`yaw_mode` 和相机/云台光轴运动学常量。
 
 ## 风场
 
@@ -353,9 +353,10 @@ PUBLISH_STATE_COMPARE_TOPICS=false ./scripts/start_visual_interception.sh
 - `/x500_0/gimbal_target_tracker/residual_error_rate`: 云台残余图像误差角速度，`x/y` 为 yaw/pitch 残差角速度，单位为 degree/s，`z` 为 `0..1` 锁定质量。
 - `/x500_0/gimbal_target_tracker/tracking_active`: 云台节点是否收到新鲜目标跟踪结果。
 - `/x500_0/gimbal_target_tracker/lock_active`: 目标是否居中且稳定到足以作为外层导引门控。
+- `/x500_0/gimbal_target_tracker/search_active`: 云台节点是否正在执行 `local_search` 或 `global_search`，视觉拦截节点用它触发无人机垂直搜索。
 - `/x500_0/gimbal_target_tracker/state`: 云台控制诊断，包含状态机状态、`cmd_yaw/cmd_pitch`、`actual_yaw/actual_pitch`、锁定阈值、残差角速度、积分项、反馈年龄和搜索状态。
 - `/fmu/in/gimbal_manager_set_attitude`: 云台高频姿态 setpoint，类型为 `px4_msgs/msg/GimbalManagerSetAttitude`。
-- `/x500_0/visual_pursuit_interceptor/diagnostics`: 视觉拦截诊断，包含 `state`、`pursuing`、`velocity_control_active`、真实 `range_m`、`closing_speed_mps`、`relative_*`、`los_rate_*`、`gimbal_truth_los_error_deg` 和输出速度。
+- `/x500_0/visual_pursuit_interceptor/diagnostics`: 视觉拦截诊断，包含 `state`、`pursuing`、`velocity_control_active`、真实 `range_m`、`closing_speed_mps`、`relative_*`、`los_rate_*`、`gimbal_truth_los_error_deg`、云台搜索/垂直搜索状态和输出速度。
 - `/target/trajectory_markers`: 目标无人机轨迹可视化。
 - `/target/trajectory_path`: 目标无人机规划路径。
 - `/target/vehicle_path`: 目标无人机实际轨迹。

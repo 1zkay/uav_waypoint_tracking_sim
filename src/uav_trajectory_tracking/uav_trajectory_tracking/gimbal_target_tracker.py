@@ -106,6 +106,10 @@ class GimbalTargetTracker(Node):
             "lock_active_topic",
             "/x500_0/gimbal_target_tracker/lock_active",
         )
+        self.declare_parameter(
+            "search_active_topic",
+            "/x500_0/gimbal_target_tracker/search_active",
+        )
         self.declare_parameter("state_topic", "/x500_0/gimbal_target_tracker/state")
 
         self.declare_parameter("target_class_id", "")
@@ -220,6 +224,9 @@ class GimbalTargetTracker(Node):
             self.get_parameter("tracking_active_topic").value
         )
         self.lock_active_topic = str(self.get_parameter("lock_active_topic").value)
+        self.search_active_topic = str(
+            self.get_parameter("search_active_topic").value
+        )
         self.state_topic = str(self.get_parameter("state_topic").value)
 
         self.target_class_id = str(self.get_parameter("target_class_id").value).strip()
@@ -517,6 +524,11 @@ class GimbalTargetTracker(Node):
             self.lock_active_topic,
             10,
         )
+        self.search_active_pub = self.create_publisher(
+            Bool,
+            self.search_active_topic,
+            10,
+        )
         self.state_pub = self.create_publisher(DiagnosticArray, self.state_topic, 10)
 
         self.create_subscription(
@@ -562,6 +574,7 @@ class GimbalTargetTracker(Node):
             f"set_attitude={self.gimbal_set_attitude_topic}, class={target_filter}, "
             f"track={track_filter}, "
             f"lock_active={self.lock_active_topic}, "
+            f"search_active={self.search_active_topic}, "
             f"residual_error_rate={self.residual_error_rate_topic}, "
             f"state={self.state_topic}, rate={self.control_rate_hz:.1f} Hz"
         )
@@ -900,7 +913,7 @@ class GimbalTargetTracker(Node):
                 pitch_rate_deg_s=0.0,
                 yaw_rate_deg_s=0.0,
             )
-            self._publish_gimbal_state(now_us, active)
+            self._publish_state_outputs(now_us, active)
             return
 
         self._update_error_integrals(
@@ -952,7 +965,7 @@ class GimbalTargetTracker(Node):
             pitch_rate_deg_s=effective_pitch_rate_deg_s,
             yaw_rate_deg_s=effective_yaw_rate_deg_s,
         )
-        self._publish_gimbal_state(now_us, active)
+        self._publish_state_outputs(now_us, active)
 
     def _handle_missing_target(self, now_s: float, dt_s: float) -> None:
         now_us = self._now_us()
@@ -991,7 +1004,7 @@ class GimbalTargetTracker(Node):
             self._reset_search()
             self._publish_hold_setpoint_if_needed(now_us)
 
-        self._publish_gimbal_state(now_us, False)
+        self._publish_state_outputs(now_us, False)
 
     def _publish_hold_setpoint_if_needed(self, now_us: int) -> None:
         if self.has_sent_gimbal_command and self.hold_last_command_on_loss:
@@ -1664,6 +1677,18 @@ class GimbalTargetTracker(Node):
         msg = Bool()
         msg.data = active
         self.lock_active_pub.publish(msg)
+
+    def _publish_state_outputs(self, now_us: int, active: bool) -> None:
+        self._publish_search_status()
+        self._publish_gimbal_state(now_us, active)
+
+    def _publish_search_status(self) -> None:
+        msg = Bool()
+        msg.data = self.tracking_state in {
+            TrackingState.LOCAL_SEARCH,
+            TrackingState.GLOBAL_SEARCH,
+        }
+        self.search_active_pub.publish(msg)
 
     def _publish_gimbal_state(self, now_us: int, active: bool) -> None:
         now_s = now_us * 1e-6

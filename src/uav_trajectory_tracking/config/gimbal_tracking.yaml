@@ -6,6 +6,7 @@ gimbal_target_tracker:
     residual_error_rate_topic: /x500_0/gimbal_target_tracker/residual_error_rate
     tracking_active_topic: /x500_0/gimbal_target_tracker/tracking_active
     lock_active_topic: /x500_0/gimbal_target_tracker/lock_active
+    search_active_topic: /x500_0/gimbal_target_tracker/search_active
     state_topic: /x500_0/gimbal_target_tracker/state
 
     # Detection selection.

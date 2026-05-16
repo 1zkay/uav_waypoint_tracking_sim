@@ -55,6 +55,7 @@ initializing
 takeoff
 transit_to_hover
 hold
+gimbal_search
 acquiring_target
 pursuit
 coast_on_lock_loss
@@ -80,7 +81,10 @@ pursuit 后短暂掉锁，且仍在 lock_loss_grace_s 内
   -> coast_on_lock_loss
 
 长时间掉锁或检测丢失
-  -> target_lost，捕获当前位置并 position hold
+  -> target_lost，捕获当前位置并等待云台搜索
+
+云台状态为 local_search/global_search 且垂直搜索开启
+  -> gimbal_search，固定 XY 并按配置上下扫描高度
 ```
 
 `pursuit` 和 `coast_on_lock_loss` 都使用 PX4 velocity control：
@@ -92,7 +96,7 @@ TrajectorySetpoint.position = [NaN, NaN, NaN]
 TrajectorySetpoint.velocity = [vx, vy, vz]
 ```
 
-`hold`、`acquiring_target` 和 `target_lost` 使用 PX4 position control。短暂掉锁不会立刻切 position hold，避免 PX4 往旧 hold 点回拉。
+`hold`、`gimbal_search`、`acquiring_target` 和 `target_lost` 使用 PX4 position control。短暂掉锁不会立刻切 position hold，避免 PX4 往旧 hold 点回拉。默认配置下，云台通过 `/x500_0/gimbal_target_tracker/search_active` 报告正在执行 `local_search` 或 `global_search` 时，主机无人机会围绕丢失位置做 NED z 方向上下扫描，以弥补云台 pitch 视场不足。
 
 ## Truth 相对几何
 
@@ -220,6 +224,11 @@ truth_odometry_timeout_s: 0.5
 
 lock_loss_grace_s: 0.6
 coast_velocity_decay_s: 0.6
+search_vertical_motion_enabled: true
+search_vertical_amplitude_m: 2.0
+search_vertical_period_s: 12.0
+search_vertical_min_z_ned: -8.0
+search_vertical_max_z_ned: -2.0
 yaw_mode: fixed_north
 ```
 

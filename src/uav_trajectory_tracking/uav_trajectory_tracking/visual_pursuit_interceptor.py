@@ -31,6 +31,7 @@ class InterceptorState:
     TAKEOFF = "takeoff"
     TRANSIT = "transit_to_hover"
     HOLD = "hold"
+    GIMBAL_SEARCH = "gimbal_search"
     ACQUIRING = "acquiring_target"
     COAST = "coast_on_lock_loss"
     PURSUIT = "pursuit"
@@ -84,6 +85,10 @@ class VisualPursuitInterceptor(Node):
         self.declare_parameter("host_truth_odometry_topic", "/model/x500_0/odometry_with_covariance")
         self.declare_parameter("target_truth_odometry_topic", "/model/x500_1/odometry_with_covariance")
         self.declare_parameter("gimbal_joint_state_topic", "/x500_0/gimbal/joint_states")
+        self.declare_parameter(
+            "gimbal_search_active_topic",
+            "/x500_0/gimbal_target_tracker/search_active",
+        )
         self.declare_parameter("tracking_active_topic", "/x500_0/gimbal_target_tracker/tracking_active")
         self.declare_parameter("lock_active_topic", "/x500_0/gimbal_target_tracker/lock_active")
         self.declare_parameter("offboard_control_mode_topic", "/fmu/in/offboard_control_mode")
@@ -162,6 +167,31 @@ class VisualPursuitInterceptor(Node):
             "gimbal_feedback_timeout_s",
         )
         self.hold_position_on_loss = bool(config.get("hold_position_on_loss", True))
+        self.search_vertical_motion_enabled = bool(
+            config.get("search_vertical_motion_enabled", False)
+        )
+        self.search_vertical_amplitude_m = nonnegative_float(
+            config.get("search_vertical_amplitude_m", 0.0),
+            "search_vertical_amplitude_m",
+        )
+        self.search_vertical_period_s = positive_float(
+            config.get("search_vertical_period_s", 10.0),
+            "search_vertical_period_s",
+        )
+        self.search_vertical_state_timeout_s = positive_float(
+            config.get("search_vertical_state_timeout_s", 0.5),
+            "search_vertical_state_timeout_s",
+        )
+        self.search_vertical_min_z_ned = float(
+            config.get("search_vertical_min_z_ned", -math.inf)
+        )
+        self.search_vertical_max_z_ned = float(
+            config.get("search_vertical_max_z_ned", math.inf)
+        )
+        if self.search_vertical_min_z_ned > self.search_vertical_max_z_ned:
+            raise ValueError(
+                "search_vertical_min_z_ned must be <= search_vertical_max_z_ned."
+            )
         self.yaw_mode = str(config.get("yaw_mode", "face_los")).strip().lower()
         self._validate_yaw_mode()
         self.gimbal_yaw_joint_name = str(
@@ -221,6 +251,8 @@ class VisualPursuitInterceptor(Node):
         self.last_lock_active_time_s: float | None = None
         self.lock_true_since_s: float | None = None
         self.last_lock_true_time_s: float | None = None
+        self.gimbal_search_active = False
+        self.last_gimbal_search_active_time_s: float | None = None
         self.gimbal_yaw_rad: float | None = None
         self.gimbal_pitch_rad: float | None = None
         self.gimbal_roll_rad: float | None = None
@@ -248,6 +280,9 @@ class VisualPursuitInterceptor(Node):
         self.last_guidance_accel_ned = (0.0, 0.0, 0.0)
         self.last_velocity_setpoint_ned = (0.0, 0.0, 0.0)
         self.last_control_time_s: float | None = None
+        self.vertical_search_start_time_s: float | None = None
+        self.vertical_search_center_z_ned: float | None = None
+        self.last_vertical_search_z_ned: float | None = None
 
         px4_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -321,6 +356,12 @@ class VisualPursuitInterceptor(Node):
         )
         self.create_subscription(
             Bool,
+            str(self.get_parameter("gimbal_search_active_topic").value),
+            self._gimbal_search_active_callback,
+            10,
+        )
+        self.create_subscription(
+            Bool,
             str(self.get_parameter("tracking_active_topic").value),
             self._tracking_active_callback,
             10,
@@ -348,6 +389,7 @@ class VisualPursuitInterceptor(Node):
             f"truth_guidance={self.truth_guidance_enabled}, "
             f"gimbal_joints=({self.gimbal_yaw_joint_name}, {self.gimbal_pitch_joint_name}), "
             f"roll_joint={self.gimbal_roll_joint_name}, "
+            f"vertical_search={self.search_vertical_motion_enabled}, "
             f"target_system={self.target_system}"
         )
 
@@ -405,6 +447,12 @@ class VisualPursuitInterceptor(Node):
             self.last_lock_true_time_s = now_s
         else:
             self.lock_true_since_s = None
+
+    def _gimbal_search_active_callback(self, msg: Bool) -> None:
+        self.gimbal_search_active = bool(msg.data)
+        self.last_gimbal_search_active_time_s = self._now_s()
+        if not self.gimbal_search_active:
+            self._reset_vertical_search()
 
     def _gimbal_joint_state_callback(self, msg: JointState) -> None:
         positions = {
@@ -497,6 +545,10 @@ class VisualPursuitInterceptor(Node):
             self.state = InterceptorState.TARGET_LOST
             return False
 
+        if self._vertical_search_active(now_s):
+            self.state = InterceptorState.GIMBAL_SEARCH
+            return False
+
         if self.truth_guidance_required and not self._fresh_truth_feedback(now_s):
             if (
                 self.previous_state in GUIDANCE_STATES
@@ -542,7 +594,11 @@ class VisualPursuitInterceptor(Node):
         )
 
     def _has_setpoint_available(self) -> bool:
-        return self.hold_position is not None or self.state in GUIDANCE_STATES
+        return (
+            self.hold_position is not None
+            or self.state in GUIDANCE_STATES
+            or self.state == InterceptorState.GIMBAL_SEARCH
+        )
 
     def _can_request_offboard(self) -> bool:
         return (
@@ -654,14 +710,20 @@ class VisualPursuitInterceptor(Node):
         assert self.vehicle_local_position is not None or not pursuing
 
         if pursuing:
+            self._reset_vertical_search()
             self._publish_pursuit_setpoint(now_us, dt_s)
             return
 
         if velocity_control:
+            self._reset_vertical_search()
             self._publish_coast_setpoint(now_us, dt_s)
             return
 
         self._reset_guidance_state()
+        if self.state == InterceptorState.GIMBAL_SEARCH:
+            self._publish_vertical_search_setpoint(now_us)
+            return
+        self._reset_vertical_search()
         self._publish_hold_setpoint(now_us)
 
     def _publish_pursuit_setpoint(self, now_us: int, dt_s: float) -> None:
@@ -885,21 +947,97 @@ class VisualPursuitInterceptor(Node):
         self.last_velocity_setpoint_ned = (0.0, 0.0, 0.0)
         self.last_commanded_closing_speed_mps = 0.0
 
+    def _vertical_search_active(self, now_s: float) -> bool:
+        if not self.search_vertical_motion_enabled:
+            return False
+        if self.search_vertical_amplitude_m <= 0.0:
+            return False
+        if not self.initial_hover_reached:
+            return False
+        if (
+            not self.gimbal_search_active
+            or self.last_gimbal_search_active_time_s is None
+        ):
+            return False
+        return (
+            now_s - self.last_gimbal_search_active_time_s
+            <= self.search_vertical_state_timeout_s
+        )
+
+    def _publish_vertical_search_setpoint(self, now_us: int) -> None:
+        if self.takeoff_position is None:
+            self._capture_takeoff_position_if_needed()
+
+        if self.hold_position is None:
+            self._update_hold_position_from_current()
+        if self.hold_position is None:
+            return
+
+        now_s = now_us * 1e-6
+        if self.vertical_search_start_time_s is None:
+            self.vertical_search_start_time_s = now_s
+            self.vertical_search_center_z_ned = self._current_z_or_hold_z()
+
+        center_z_ned = (
+            self.vertical_search_center_z_ned
+            if self.vertical_search_center_z_ned is not None
+            else self.hold_position[2]
+        )
+        elapsed_s = max(0.0, now_s - self.vertical_search_start_time_s)
+        phase_rad = 2.0 * math.pi * elapsed_s / self.search_vertical_period_s
+        z_offset_m = -self.search_vertical_amplitude_m * math.sin(phase_rad)
+        target_z_ned = clamp(
+            center_z_ned + z_offset_m,
+            self.search_vertical_min_z_ned,
+            self.search_vertical_max_z_ned,
+        )
+        self.last_vertical_search_z_ned = target_z_ned
+
+        msg = TrajectorySetpoint()
+        msg.position = [self.hold_position[0], self.hold_position[1], target_z_ned]
+        msg.velocity = [math.nan, math.nan, math.nan]
+        msg.acceleration = [math.nan, math.nan, math.nan]
+        msg.jerk = [math.nan, math.nan, math.nan]
+        msg.yaw = self._yaw_from_los(self.last_los_ned)
+        msg.yawspeed = math.nan
+        msg.timestamp = now_us
+        self.trajectory_pub.publish(msg)
+
+    def _reset_vertical_search(self) -> None:
+        if self.vertical_search_start_time_s is not None:
+            self._update_hold_position_from_current()
+        self.vertical_search_start_time_s = None
+        self.vertical_search_center_z_ned = None
+        self.last_vertical_search_z_ned = None
+
+    def _update_hold_position_from_current(self) -> None:
+        if (
+            self.vehicle_local_position is None
+            or not self.vehicle_local_position.xy_valid
+            or not self.vehicle_local_position.z_valid
+        ):
+            return
+        self.hold_position = (
+            float(self.vehicle_local_position.x),
+            float(self.vehicle_local_position.y),
+            float(self.vehicle_local_position.z),
+        )
+
+    def _current_z_or_hold_z(self) -> float:
+        if (
+            self.vehicle_local_position is not None
+            and self.vehicle_local_position.z_valid
+        ):
+            return float(self.vehicle_local_position.z)
+        assert self.hold_position is not None
+        return self.hold_position[2]
+
     def _publish_hold_setpoint(self, now_us: int) -> None:
         if self.takeoff_position is None:
             self._capture_takeoff_position_if_needed()
 
-        if (
-            self.vehicle_local_position is not None
-            and self.vehicle_local_position.xy_valid
-            and self.vehicle_local_position.z_valid
-        ):
-            if not self.hold_position_on_loss or self.hold_position is None:
-                self.hold_position = (
-                    float(self.vehicle_local_position.x),
-                    float(self.vehicle_local_position.y),
-                    float(self.vehicle_local_position.z),
-                )
+        if not self.hold_position_on_loss or self.hold_position is None:
+            self._update_hold_position_from_current()
 
         if self.hold_position is None:
             return
@@ -1035,6 +1173,27 @@ class VisualPursuitInterceptor(Node):
             diagnostic_value("hold_z_m", point_value(self.hold_position, 2)),
             diagnostic_value("detection_active", self.tracking_active),
             diagnostic_value("lock_active", self.lock_active),
+            diagnostic_value("gimbal_search_active", self.gimbal_search_active),
+            diagnostic_value(
+                "gimbal_search_active_age_s",
+                self._gimbal_search_active_age_s(now_us * 1e-6),
+            ),
+            diagnostic_value(
+                "vertical_search_active",
+                self._vertical_search_active(now_us * 1e-6),
+            ),
+            diagnostic_value(
+                "vertical_search_center_z_ned",
+                self.vertical_search_center_z_ned,
+            ),
+            diagnostic_value(
+                "vertical_search_target_z_ned",
+                self.last_vertical_search_z_ned,
+            ),
+            diagnostic_value(
+                "search_vertical_amplitude_m",
+                self.search_vertical_amplitude_m,
+            ),
             diagnostic_value(
                 "detection_true_duration_s",
                 self._detection_true_duration_s(now_us * 1e-6),
@@ -1176,6 +1335,11 @@ class VisualPursuitInterceptor(Node):
         if self.lock_active or self.last_lock_true_time_s is None:
             return None
         return max(0.0, now_s - self.last_lock_true_time_s)
+
+    def _gimbal_search_active_age_s(self, now_s: float) -> float | None:
+        if self.last_gimbal_search_active_time_s is None:
+            return None
+        return max(0.0, now_s - self.last_gimbal_search_active_time_s)
 
 
 def gimbal_angles_to_body_los(
